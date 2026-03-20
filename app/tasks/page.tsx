@@ -13,11 +13,12 @@ import ToastContainer, { showToast } from '@/components/ui/Toast';
 import QuickInput from '@/components/tasks/QuickInput';
 import BulkInput from '@/components/tasks/BulkInput';
 import KanbanBoard from '@/components/tasks/KanbanBoard';
-import TaskDetail from '@/components/tasks/TaskDetail';
 import FocusView from '@/components/tasks/FocusView';
 import AllTasksView from '@/components/tasks/AllTasksView';
 import CompletedView from '@/components/tasks/CompletedView';
 import TaskDetailSheet from '@/components/tasks/TaskDetailSheet';
+import StockDetailSheet from '@/components/tasks/StockDetailSheet';
+import SparkDetailSheet from '@/components/tasks/SparkDetailSheet';
 import DumpMode from '@/components/tasks/DumpMode';
 import { getTagStyle } from '@/lib/tags';
 
@@ -34,6 +35,7 @@ export default function TasksPage() {
   const [selectedItem, setSelectedItem] = useState<Item | null>(null);
   const [userId, setUserId] = useState<string | null>(null);
   const [tagFilter, setTagFilter] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
 
   // Init
   useEffect(() => {
@@ -73,23 +75,42 @@ export default function TasksPage() {
     }
   };
 
-  // Reload items
   const reloadItems = useCallback(async () => {
     if (userId) await loadItems(userId);
   }, [userId]);
 
-  // Quick add
+  // Quick add with prefix detection
   const handleQuickAdd = useCallback(async (title: string, tags: string[]) => {
     if (!userId) return;
 
-    const urlMatch = title.match(/(https?:\/\/[^\s]+)/);
+    // Check for type prefix shortcuts
     let itemType: 'task' | 'clip' | 'idea' = 'task';
+    let cleanTitle = title;
+
+    if (title.startsWith('📌') || title.startsWith('📌 ')) {
+      itemType = 'clip';
+      cleanTitle = title.replace(/^📌\s*/, '').trim();
+    } else if (title.startsWith('💡') || title.startsWith('💡 ')) {
+      itemType = 'idea';
+      cleanTitle = title.replace(/^💡\s*/, '').trim();
+    }
+
+    // Existing URL detection for clips
+    const urlMatch = cleanTitle.match(/(https?:\/\/[^\s]+)/);
     let linkUrl = null;
     let linkTitle = null;
     let linkThumbnail = null;
 
-    if (urlMatch) {
+    if (urlMatch && itemType === 'task') {
       itemType = 'clip';
+      linkUrl = urlMatch[1];
+      try {
+        const ogpRes = await fetch(`/api/ogp?url=${encodeURIComponent(linkUrl)}`);
+        const ogp = await ogpRes.json();
+        if (ogp.title) linkTitle = ogp.title;
+        if (ogp.image) linkThumbnail = ogp.image;
+      } catch {}
+    } else if (urlMatch && itemType === 'clip') {
       linkUrl = urlMatch[1];
       try {
         const ogpRes = await fetch(`/api/ogp?url=${encodeURIComponent(linkUrl)}`);
@@ -101,17 +122,24 @@ export default function TasksPage() {
 
     if (tags.includes('アイデア')) itemType = 'idea';
 
+    const insertData: Record<string, any> = {
+      user_id: userId,
+      type: itemType,
+      title: linkTitle || cleanTitle,
+      tags,
+      link_url: linkUrl,
+      link_title: linkTitle,
+      link_thumbnail: linkThumbnail,
+    };
+
+    // If clip from prefix, also set url field
+    if (itemType === 'clip' && linkUrl) {
+      insertData.url = linkUrl;
+    }
+
     const { data, error } = await supabase
       .from('items')
-      .insert({
-        user_id: userId,
-        type: itemType,
-        title: linkTitle || title,
-        tags,
-        link_url: linkUrl,
-        link_title: linkTitle,
-        link_thumbnail: linkThumbnail,
-      })
+      .insert(insertData)
       .select()
       .single();
 
@@ -209,12 +237,10 @@ export default function TasksPage() {
     }
   }, []);
 
-  // Complete task (from hero card)
   const handleComplete = useCallback(async (id: string) => {
     await handleStatusChange(id, 'done');
   }, [handleStatusChange]);
 
-  // Toggle complete
   const handleToggleComplete = useCallback(async (id: string) => {
     const item = items.find(i => i.id === id);
     if (!item) return;
@@ -237,12 +263,10 @@ export default function TasksPage() {
 
   // Set focus
   const handleSetFocus = useCallback(async (id: string) => {
-    // Clear existing focus items
     const currentFocus = items.filter(i => i.is_focus);
     for (const fi of currentFocus) {
       await supabase.from('items').update({ is_focus: false, focus_order: 0 }).eq('id', fi.id);
     }
-    // Set new focus
     await supabase.from('items').update({ is_focus: true, focus_order: 1, status: 'today' }).eq('id', id);
     await reloadItems();
     setSelectedItem(null);
@@ -296,13 +320,11 @@ export default function TasksPage() {
         throw new Error('AI応答の解析に失敗');
       }
 
-      // Clear existing focus
       const currentFocus = items.filter(i => i.is_focus);
       for (const fi of currentFocus) {
         await supabase.from('items').update({ is_focus: false, focus_order: 0 }).eq('id', fi.id);
       }
 
-      // Set new focus items
       for (let i = 0; i < Math.min(parsed.focus.length, 3); i++) {
         const f = parsed.focus[i];
         await supabase.from('items').update({
@@ -321,13 +343,52 @@ export default function TasksPage() {
     }
   }, [items, userId, reloadItems]);
 
+  // Convert stock/spark to task
+  const handleConvertToTask = useCallback(async (item: Item) => {
+    const titleSuffix = item.title.endsWith('する') ? '' : 'する';
+    const taskTitle = item.type === 'idea'
+      ? `${item.title}を検討${titleSuffix ? '' : ''}`
+      : item.title;
+
+    const updates: Record<string, any> = {
+      type: 'task',
+      title: taskTitle.endsWith('する') ? taskTitle : `${taskTitle}を実行する`,
+      status: 'inbox',
+      action_type: 'do',
+      updated_at: new Date().toISOString(),
+    };
+
+    // Carry over body content
+    if (item.type === 'idea' && item.body) {
+      updates.body = item.body;
+    } else if (item.type === 'clip') {
+      const memoNote = item.memo ? `\n\nストックメモ: ${item.memo}` : '';
+      const urlNote = (item.url || item.link_url) ? `\n\nURL: ${item.url || item.link_url}` : '';
+      updates.body = (item.body || '') + urlNote + memoNote;
+    }
+
+    const { data } = await supabase
+      .from('items')
+      .update(updates)
+      .eq('id', item.id)
+      .select()
+      .single();
+
+    if (data) {
+      setItems(prev => prev.map(i => i.id === item.id ? data : i));
+      setSelectedItem(data);
+      setTopTab('task');
+      showToast('🔥 タスクに変換しました', 'success');
+    }
+  }, []);
+
   // === DERIVED DATA ===
 
   const taskItems = items.filter(i => i.type === 'task');
   const clipItems = items.filter(i => i.type === 'clip');
   const ideaItems = items.filter(i => i.type === 'idea');
 
-  // Focus items: explicit focus first, then auto-fill
+  // Focus items
   const focusItems = getFocusItems(taskItems);
 
   // Today's progress
@@ -337,12 +398,39 @@ export default function TasksPage() {
   ).length;
   const totalToday = completedToday + focusItems.length;
 
-  // Filtered items for clip/idea tabs
-  const filteredClips = clipItems.filter(i => !tagFilter || i.tags.includes(tagFilter));
-  const filteredIdeas = ideaItems.filter(i => !tagFilter || i.tags.includes(tagFilter));
+  // Filtered items for stock/spark tabs
+  const filteredClips = clipItems.filter(i => {
+    if (tagFilter && !i.tags.includes(tagFilter)) return false;
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      const matchTitle = i.title.toLowerCase().includes(q);
+      const matchMemo = (i.memo || '').toLowerCase().includes(q);
+      const matchTags = i.tags.some(t => t.toLowerCase().includes(q));
+      const matchUrl = (i.url || i.link_url || '').toLowerCase().includes(q);
+      return matchTitle || matchMemo || matchTags || matchUrl;
+    }
+    return true;
+  });
 
-  // Tags for clip/idea filter
-  const allTags = Array.from(new Set(items.flatMap(i => i.tags)));
+  const filteredIdeas = ideaItems.filter(i => {
+    if (tagFilter && !i.tags.includes(tagFilter)) return false;
+    if (searchQuery) {
+      const q = searchQuery.toLowerCase();
+      const matchTitle = i.title.toLowerCase().includes(q);
+      const matchBody = (i.body || '').toLowerCase().includes(q);
+      const matchTags = i.tags.some(t => t.toLowerCase().includes(q));
+      return matchTitle || matchBody || matchTags;
+    }
+    return true;
+  });
+
+  // Tags for filter
+  const stockTags = Array.from(new Set(clipItems.flatMap(i => i.tags)));
+  const sparkTags = Array.from(new Set(ideaItems.flatMap(i => i.tags)));
+  const currentTabTags = topTab === 'clip' ? stockTags : topTab === 'idea' ? sparkTags : [];
+
+  // Task count = non-done
+  const taskCount = taskItems.filter(i => i.status !== 'done').length;
 
   return (
     <AuthGuard>
@@ -354,32 +442,30 @@ export default function TasksPage() {
             {/* Header */}
             <div className="flex items-center justify-between mb-5">
               <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
-                {topTab === 'task' ? '☀️ 今やること' : topTab === 'clip' ? '📎 クリッピング' : '💡 アイデア'}
+                {topTab === 'task' ? '☀️ 今やること' : topTab === 'clip' ? '📌 ストック' : '💡 ひらめき'}
               </h2>
-              {topTab === 'task' && (
-                <button
-                  onClick={() => setShowDump(true)}
-                  className="w-12 h-12 rounded-full flex items-center justify-center text-white shadow-lg transition hover:scale-105"
-                  style={{ backgroundColor: '#1565C0' }}
-                  title="脳内を吐き出す"
-                >
-                  <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-                  </svg>
-                </button>
-              )}
+              <button
+                onClick={() => setShowDump(true)}
+                className="w-12 h-12 rounded-full flex items-center justify-center text-white shadow-lg transition hover:scale-105"
+                style={{ backgroundColor: '#1565C0' }}
+                title="脳内を吐き出す"
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                </svg>
+              </button>
             </div>
 
             {/* Top tabs */}
             <div className="flex items-center gap-4 mb-4 border-b border-gray-200">
               {([
-                { key: 'task' as TopTab, label: 'タスク', count: taskItems.length },
-                { key: 'clip' as TopTab, label: 'クリッピング', count: clipItems.length },
-                { key: 'idea' as TopTab, label: 'アイデア', count: ideaItems.length },
+                { key: 'task' as TopTab, label: '🔥 やること', count: taskCount },
+                { key: 'clip' as TopTab, label: '📌 ストック', count: clipItems.length },
+                { key: 'idea' as TopTab, label: '💡 ひらめき', count: ideaItems.length },
               ]).map(t => (
                 <button
                   key={t.key}
-                  onClick={() => { setTopTab(t.key); setTagFilter(null); }}
+                  onClick={() => { setTopTab(t.key); setTagFilter(null); setSearchQuery(''); }}
                   className={`pb-2.5 text-sm font-medium border-b-2 transition ${
                     topTab === t.key
                       ? 'border-jinden-blue text-jinden-blue'
@@ -397,7 +483,6 @@ export default function TasksPage() {
               <>
                 {/* PC Layout: two columns */}
                 <div className="hidden md:grid md:grid-cols-[400px_1fr] md:gap-8">
-                  {/* Left: Focus area */}
                   <div>
                     <FocusView
                       items={taskItems}
@@ -409,7 +494,6 @@ export default function TasksPage() {
                       onAISuggest={handleAISuggest}
                       onGoToAll={() => setSubTab('all')}
                     />
-                    {/* Kanban link */}
                     <button
                       onClick={() => setSubTab('kanban')}
                       className="mt-4 text-sm text-jinden-blue hover:underline"
@@ -418,9 +502,7 @@ export default function TasksPage() {
                     </button>
                   </div>
 
-                  {/* Right: Sub-tabs + list */}
                   <div>
-                    {/* Sub-tabs (PC) */}
                     <div className="flex items-center gap-3 mb-4">
                       {([
                         { key: 'all' as SubTab, label: '📋 すべて' },
@@ -441,7 +523,6 @@ export default function TasksPage() {
                       ))}
                     </div>
 
-                    {/* Quick Input */}
                     <div className="mb-4">
                       <QuickInput
                         onSubmit={handleQuickAdd}
@@ -474,7 +555,7 @@ export default function TasksPage() {
                   </div>
                 </div>
 
-                {/* Mobile Layout: single column with bottom tabs */}
+                {/* Mobile Layout */}
                 <div className="md:hidden">
                   {subTab === 'focus' && (
                     <FocusView
@@ -513,25 +594,36 @@ export default function TasksPage() {
               </>
             )}
 
-            {/* === CLIP TAB === */}
+            {/* === STOCK TAB === */}
             {topTab === 'clip' && (
               <>
+                {/* Search bar */}
+                <div className="mb-4">
+                  <input
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="ストックを検索..."
+                    className="w-full text-sm border border-gray-200 rounded-xl px-4 py-2.5 outline-none focus:border-jinden-blue bg-white"
+                    style={{ fontSize: 16 }}
+                  />
+                </div>
+
                 {/* Tag filter */}
-                {allTags.length > 0 && (
-                  <div className="flex flex-wrap gap-1.5 mb-4">
+                {currentTabTags.length > 0 && (
+                  <div className="flex flex-nowrap gap-1.5 mb-4 overflow-x-auto pb-1 -mx-1 px-1">
                     <button
                       onClick={() => setTagFilter(null)}
-                      className={`text-[11px] px-2 py-1 rounded-full font-medium transition ${
+                      className={`text-[11px] px-2.5 py-1 rounded-full font-medium transition flex-shrink-0 ${
                         !tagFilter ? 'bg-gray-800 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
                       }`}
                     >
                       すべて
                     </button>
-                    {allTags.map(tag => (
+                    {currentTabTags.map(tag => (
                       <button
                         key={tag}
                         onClick={() => setTagFilter(tagFilter === tag ? null : tag)}
-                        className={`text-[11px] px-2 py-1 rounded-full font-medium transition ${
+                        className={`text-[11px] px-2.5 py-1 rounded-full font-medium transition flex-shrink-0 ${
                           tagFilter === tag ? 'bg-gray-800 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
                         }`}
                       >
@@ -541,60 +633,53 @@ export default function TasksPage() {
                   </div>
                 )}
 
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                  {filteredClips.length === 0 && (
-                    <div className="col-span-full text-center py-12 text-gray-400 text-sm">
-                      クリッピングがありません
-                    </div>
-                  )}
-                  {filteredClips.map(item => (
-                    <div
-                      key={item.id}
-                      onClick={() => setSelectedItem(item)}
-                      className="bg-white border border-gray-200 rounded-xl overflow-hidden cursor-pointer hover:shadow-sm transition"
-                    >
-                      {item.link_thumbnail && (
-                        <img src={item.link_thumbnail} alt="" className="w-full h-32 object-cover" />
-                      )}
-                      {item.image_url && !item.link_thumbnail && (
-                        <img src={item.image_url} alt="" className="w-full h-32 object-cover" />
-                      )}
-                      <div className="p-3">
-                        <div className="text-sm font-medium text-gray-800 leading-snug truncate">{item.title}</div>
-                        {item.link_url && (
-                          <div className="text-[10px] text-gray-400 truncate mt-0.5">{item.link_url}</div>
-                        )}
-                        <div className="flex items-center gap-2 mt-2">
-                          <ClipTags tags={item.tags} />
-                          <span className="text-[10px] text-gray-400 ml-auto">
-                            {new Date(item.created_at).toLocaleDateString('ja-JP')}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
+                {/* Stock cards */}
+                {filteredClips.length === 0 ? (
+                  <StockEmptyState />
+                ) : (
+                  <div className="space-y-3">
+                    {filteredClips.map(item => (
+                      <StockCard
+                        key={item.id}
+                        item={item}
+                        onTap={() => setSelectedItem(item)}
+                      />
+                    ))}
+                  </div>
+                )}
               </>
             )}
 
-            {/* === IDEA TAB === */}
+            {/* === SPARK TAB === */}
             {topTab === 'idea' && (
               <>
-                {allTags.length > 0 && (
-                  <div className="flex flex-wrap gap-1.5 mb-4">
+                {/* Search bar */}
+                <div className="mb-4">
+                  <input
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="ひらめきを検索..."
+                    className="w-full text-sm border border-gray-200 rounded-xl px-4 py-2.5 outline-none focus:border-jinden-blue bg-white"
+                    style={{ fontSize: 16 }}
+                  />
+                </div>
+
+                {/* Tag filter */}
+                {currentTabTags.length > 0 && (
+                  <div className="flex flex-nowrap gap-1.5 mb-4 overflow-x-auto pb-1 -mx-1 px-1">
                     <button
                       onClick={() => setTagFilter(null)}
-                      className={`text-[11px] px-2 py-1 rounded-full font-medium transition ${
+                      className={`text-[11px] px-2.5 py-1 rounded-full font-medium transition flex-shrink-0 ${
                         !tagFilter ? 'bg-gray-800 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
                       }`}
                     >
                       すべて
                     </button>
-                    {allTags.map(tag => (
+                    {currentTabTags.map(tag => (
                       <button
                         key={tag}
                         onClick={() => setTagFilter(tagFilter === tag ? null : tag)}
-                        className={`text-[11px] px-2 py-1 rounded-full font-medium transition ${
+                        className={`text-[11px] px-2.5 py-1 rounded-full font-medium transition flex-shrink-0 ${
                           tagFilter === tag ? 'bg-gray-800 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
                         }`}
                       >
@@ -604,33 +689,25 @@ export default function TasksPage() {
                   </div>
                 )}
 
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-                  {filteredIdeas.length === 0 && (
-                    <div className="col-span-full text-center py-12 text-gray-400 text-sm">
-                      アイデアがありません
-                    </div>
-                  )}
-                  {filteredIdeas.map(item => (
-                    <div
-                      key={item.id}
-                      onClick={() => setSelectedItem(item)}
-                      className="bg-white border border-gray-200 rounded-xl p-4 cursor-pointer hover:shadow-sm transition"
-                    >
-                      <div className="text-sm font-medium text-gray-800 leading-snug">{item.title}</div>
-                      {item.body && (
-                        <div className="text-xs text-gray-500 mt-1 line-clamp-2">{item.body}</div>
-                      )}
-                      <div className="flex items-center gap-1.5 mt-3">
-                        <ClipTags tags={item.tags} />
-                      </div>
-                    </div>
-                  ))}
-                </div>
+                {/* Spark cards */}
+                {filteredIdeas.length === 0 ? (
+                  <SparkEmptyState />
+                ) : (
+                  <div className="space-y-3">
+                    {filteredIdeas.map(item => (
+                      <SparkCard
+                        key={item.id}
+                        item={item}
+                        onTap={() => setSelectedItem(item)}
+                      />
+                    ))}
+                  </div>
+                )}
               </>
             )}
           </div>
 
-          {/* Quick Input for clip/idea on mobile */}
+          {/* Quick Input for stock/spark on mobile */}
           {topTab !== 'task' && (
             <div className="mb-5 px-4 md:px-7">
               <QuickInput
@@ -682,7 +759,7 @@ export default function TasksPage() {
           />
         )}
 
-        {/* Task Detail - use new sheet for tasks, old panel for clips/ideas */}
+        {/* Detail sheets — type-specific */}
         {selectedItem && selectedItem.type === 'task' && (
           <TaskDetailSheet
             item={selectedItem}
@@ -692,11 +769,22 @@ export default function TasksPage() {
             onSetFocus={handleSetFocus}
           />
         )}
-        {selectedItem && selectedItem.type !== 'task' && (
-          <TaskDetail
+        {selectedItem && selectedItem.type === 'clip' && (
+          <StockDetailSheet
             item={selectedItem}
             onClose={() => setSelectedItem(null)}
             onUpdate={handleItemUpdate}
+            onDelete={handleDelete}
+            onConvertToTask={handleConvertToTask}
+          />
+        )}
+        {selectedItem && selectedItem.type === 'idea' && (
+          <SparkDetailSheet
+            item={selectedItem}
+            onClose={() => setSelectedItem(null)}
+            onUpdate={handleItemUpdate}
+            onDelete={handleDelete}
+            onConvertToTask={handleConvertToTask}
           />
         )}
 
@@ -706,19 +794,147 @@ export default function TasksPage() {
   );
 }
 
+// === STOCK CARD ===
+
+function StockCard({ item, onTap }: { item: Item; onTap: () => void }) {
+  const getDomain = (urlStr: string) => {
+    try { return new URL(urlStr).hostname; } catch { return urlStr; }
+  };
+
+  const displayUrl = item.url || item.link_url;
+
+  return (
+    <div
+      onClick={onTap}
+      className="bg-white border border-gray-200 rounded-xl p-4 cursor-pointer hover:shadow-sm transition"
+    >
+      <div className="text-sm font-medium text-gray-800 leading-snug">
+        📌 {item.title}
+      </div>
+
+      {displayUrl && (
+        <div className="flex items-center gap-1 mt-1.5">
+          <span className="text-[11px] text-jinden-blue truncate">
+            🔗 {getDomain(displayUrl)}
+          </span>
+        </div>
+      )}
+
+      {item.memo && (
+        <div className="text-xs text-gray-500 mt-2 line-clamp-2">
+          {item.memo}
+        </div>
+      )}
+
+      <div className="flex items-center gap-1.5 mt-2.5 flex-wrap">
+        {item.tags.map(tag => {
+          const style = getTagStyle(tag);
+          return (
+            <span
+              key={tag}
+              className="text-[10px] px-1.5 py-0.5 rounded-full font-medium"
+              style={{ color: style.color, backgroundColor: style.bg }}
+            >
+              #{tag}
+            </span>
+          );
+        })}
+        <span className="text-[10px] text-gray-400 ml-auto">
+          {new Date(item.created_at).toLocaleDateString('ja-JP')}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+// === SPARK CARD ===
+
+function SparkCard({ item, onTap }: { item: Item; onTap: () => void }) {
+  return (
+    <div
+      onClick={onTap}
+      className="bg-white border border-gray-200 rounded-xl p-4 cursor-pointer hover:shadow-sm transition"
+    >
+      <div className="text-sm font-medium text-gray-800 leading-snug">
+        💡 {item.title}
+      </div>
+
+      {item.body && (
+        <div className="text-xs text-gray-500 mt-2 line-clamp-3 whitespace-pre-wrap">
+          {item.body}
+        </div>
+      )}
+
+      <div className="flex items-center gap-1.5 mt-2.5 flex-wrap">
+        {item.tags.map(tag => {
+          const style = getTagStyle(tag);
+          return (
+            <span
+              key={tag}
+              className="text-[10px] px-1.5 py-0.5 rounded-full font-medium"
+              style={{ color: style.color, backgroundColor: style.bg }}
+            >
+              #{tag}
+            </span>
+          );
+        })}
+        {item.twin_candidate && (
+          <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-purple-50 text-purple-600 font-medium">
+            🧠
+          </span>
+        )}
+        <span className="text-[10px] text-gray-400 ml-auto">
+          {new Date(item.created_at).toLocaleDateString('ja-JP')}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+// === EMPTY STATES ===
+
+function StockEmptyState() {
+  return (
+    <div className="text-center py-16">
+      <div className="text-4xl mb-4">📌</div>
+      <div className="text-sm text-gray-500 leading-relaxed">
+        気になった記事やツールをストック
+      </div>
+      <div className="text-xs text-gray-400 mt-2 leading-relaxed">
+        ＋ボタンからURLやメモを投げ込むと<br />
+        自動で分類されるよ
+      </div>
+    </div>
+  );
+}
+
+function SparkEmptyState() {
+  return (
+    <div className="text-center py-16">
+      <div className="text-4xl mb-4">💡</div>
+      <div className="text-sm text-gray-500 leading-relaxed">
+        思いついたこと、気づいたことを<br />
+        ここに溜めておく
+      </div>
+      <div className="text-xs text-gray-400 mt-2 leading-relaxed">
+        形になりそうなら「タスクにする」<br />
+        じんでんの思考なら「思想DBに送る」
+      </div>
+    </div>
+  );
+}
+
 // === UTILITY FUNCTIONS ===
 
 function getFocusItems(items: Item[]): Item[] {
   const nonDone = items.filter(i => i.status !== 'done');
 
-  // Explicit focus items first
   const explicit = nonDone
     .filter(i => i.is_focus)
     .sort((a, b) => a.focus_order - b.focus_order);
 
   if (explicit.length >= 3) return explicit.slice(0, 3);
 
-  // Auto-fill from today/in_progress/this_week
   const explicitIds = new Set(explicit.map(i => i.id));
   const autoPool = nonDone
     .filter(i => !explicitIds.has(i.id) && (i.status === 'today' || i.status === 'in_progress' || i.status === 'this_week'))
@@ -738,25 +954,6 @@ function getFocusItems(items: Item[]): Item[] {
 
   const needed = 3 - explicit.length;
   return [...explicit, ...autoPool.slice(0, needed)];
-}
-
-function ClipTags({ tags }: { tags: string[] }) {
-  return (
-    <>
-      {tags.map(tag => {
-        const style = getTagStyle(tag);
-        return (
-          <span
-            key={tag}
-            className="text-[10px] px-1.5 py-0.5 rounded-full font-medium"
-            style={{ color: style.color, backgroundColor: style.bg }}
-          >
-            #{tag}
-          </span>
-        );
-      })}
-    </>
-  );
 }
 
 function scheduleNotifications() {

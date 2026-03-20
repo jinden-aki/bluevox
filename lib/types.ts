@@ -315,6 +315,11 @@ export interface Item {
   ai_generated: boolean;
   is_focus: boolean;
   focus_order: number;
+  // Unified inbox fields
+  url: string | null;
+  source: string | null;
+  memo: string | null;
+  twin_candidate: boolean;
 }
 
 export interface ItemChat {

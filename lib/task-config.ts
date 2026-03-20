@@ -55,3 +55,27 @@ export interface ParsedTask {
   project: string | null;
   checked: boolean; // UI state for preview
 }
+
+export interface ParsedStock {
+  title: string;
+  url: string | null;
+  source: string | null;
+  tags: string[];
+  memo: string | null;
+  project: string | null;
+  checked: boolean;
+}
+
+export interface ParsedSpark {
+  title: string;
+  body: string;
+  tags: string[];
+  project: string | null;
+  twin_candidate: boolean;
+  checked: boolean;
+}
+
+export type ParsedItem =
+  | ({ itemType: 'task' } & ParsedTask)
+  | ({ itemType: 'stock' } & ParsedStock)
+  | ({ itemType: 'spark' } & ParsedSpark);

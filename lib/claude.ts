@@ -7,6 +7,7 @@ const MODEL_MAP = {
   taskChat: 'claude-haiku-4-5-20251001',
   generalChat: 'claude-haiku-4-5-20251001',
   taskDump: 'claude-haiku-4-5-20251001',
+  inboxDump: 'claude-haiku-4-5-20251001',
   taskFocus: 'claude-haiku-4-5-20251001',
 } as const;
 

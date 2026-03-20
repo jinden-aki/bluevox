@@ -131,6 +131,16 @@ export default function ThoughtDBComponent() {
     loadDB();
   }, [loadDB]);
 
+  // Pick up text injected from SparkDetailSheet ("思想DBに送る")
+  useEffect(() => {
+    const injected = localStorage.getItem('twin_inject_text');
+    if (injected) {
+      setInputText(injected);
+      setShowAddForm(true);
+      localStorage.removeItem('twin_inject_text');
+    }
+  }, []);
+
   const initializeDefaultData = async () => {
     try {
       const { JINDEN_INITIAL_THOUGHTS } = await import('@/lib/thought-data');
