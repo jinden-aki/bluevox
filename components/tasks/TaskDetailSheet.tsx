@@ -146,7 +146,7 @@ export default function TaskDetailSheet({ item, onClose, onUpdate, onDelete, onS
   const handleAddContact = () => {
     const names = contactInput.split(/[,、，・]/).map(n => n.trim()).filter(Boolean);
     if (names.length > 0) {
-      const newContacts = [...new Set([...contactPersons, ...names])];
+      const newContacts = Array.from(new Set([...contactPersons, ...names]));
       setContactPersons(newContacts);
       setContactInput('');
       saveFieldImmediate({ contact_persons: newContacts });
