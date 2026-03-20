@@ -9,8 +9,22 @@ const config: Config = {
   theme: {
     extend: {
       colors: {
-        background: "var(--background)",
-        foreground: "var(--foreground)",
+        midnight: '#0A1628',
+        deep: '#0D2844',
+        'jinden-blue': '#1565C0',
+        vox: '#2196F3',
+        sky: '#42A5F5',
+        wash: '#90CAF9',
+        mist: '#E3F2FD',
+        paper: '#F8FAFD',
+        torch: '#E65100',
+        'torch-light': '#FF8A50',
+        ink: '#1A1A1A',
+      },
+      fontFamily: {
+        brand: ['Cormorant Garamond', 'serif'],
+        serif: ['Noto Serif JP', 'serif'],
+        sans: ['Noto Sans JP', 'sans-serif'],
       },
     },
   },
