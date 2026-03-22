@@ -20,6 +20,8 @@ const config: Config = {
         torch: '#E65100',
         'torch-light': '#FF8A50',
         ink: '#1A1A1A',
+        stale: '#7C3AED',
+        'stale-bg': '#F5F3FF',
       },
       fontFamily: {
         brand: ['Cormorant Garamond', 'serif'],

@@ -459,7 +459,7 @@ export type ThoughtDimension = '信念' | '判断基準' | '口癖' | '問い' |
 
 // Items (tasks, clips, ideas)
 export type ItemType = 'task' | 'clip' | 'idea';
-export type ItemStatus = 'inbox' | 'this_week' | 'today' | 'in_progress' | 'done';
+export type ItemStatus = 'inbox' | 'this_week' | 'today' | 'in_progress' | 'done' | 'deleted';
 
 export interface Item {
   id: string;
@@ -515,3 +515,47 @@ export interface GeneralChat {
   content: string;
   created_at: string;
 }
+
+// ============================================================
+// Task Management V8 Types
+// ============================================================
+
+export type BallHolder = 'self' | 'other';
+export type TaskStatus = 'inbox' | 'this_week' | 'today' | 'in_progress' | 'done' | 'deleted';
+
+// TaskItem = Item + V8フィールド
+export interface TaskItem extends Item {
+  // V8: ボール管理
+  ball_holder: BallHolder;
+  ball_holder_name: string | null;
+  ball_passed_at: string | null;
+  ball_remind_days: number;
+  // V8: 今日のフォーカス
+  is_today_focus: boolean;
+  focus_selected_date: string | null;
+  // V8: サブタスク / メモ
+  parent_id: string | null;
+  notes: string | null;
+  item_type: string;
+}
+
+export interface WeeklyReview {
+  id: string;
+  user_id: string;
+  week_start: string;
+  done_summary: string | null;
+  learned: string | null;
+  next_hypothesis: string | null;
+  ai_comment: string | null;
+  created_at: string;
+}
+
+export const PROJECTS = [
+  { id: 'bluevox', label: 'BLUEVOX', color: '#1565C0', icon: '🟦' },
+  { id: 'omg',     label: 'OMG',     color: '#2E7D32', icon: '🟩' },
+  { id: 'ly',      label: 'LY本業',  color: '#E65100', icon: '🟧' },
+  { id: 'personal',label: '個人',    color: '#6A1B9A', icon: '🟪' },
+  { id: 'other',   label: 'その他',  color: '#78909C', icon: '⬜' },
+] as const;
+
+export type ProjectId = typeof PROJECTS[number]['id'];

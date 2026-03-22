@@ -2,55 +2,116 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { supabase } from '@/lib/supabase';
-import { Item, ItemStatus } from '@/lib/types';
+import { Item, ItemStatus, TaskItem } from '@/lib/types';
 import { getApiKey } from '@/lib/api-key';
 import { callClaude, parseJSON } from '@/lib/claude';
 import { FOCUS_SUGGEST_PROMPT } from '@/lib/prompts/dump-agent';
 import AuthGuard from '@/components/layout/AuthGuard';
 import Sidebar from '@/components/layout/Sidebar';
-import Topbar from '@/components/layout/Topbar';
 import ToastContainer, { showToast } from '@/components/ui/Toast';
-import QuickInput from '@/components/tasks/QuickInput';
-import BulkInput from '@/components/tasks/BulkInput';
 import KanbanBoard from '@/components/tasks/KanbanBoard';
-import FocusView from '@/components/tasks/FocusView';
-import AllTasksView from '@/components/tasks/AllTasksView';
-import CompletedView from '@/components/tasks/CompletedView';
-import TaskDetailSheet from '@/components/tasks/TaskDetailSheet';
 import StockDetailSheet from '@/components/tasks/StockDetailSheet';
 import SparkDetailSheet from '@/components/tasks/SparkDetailSheet';
-import DumpMode from '@/components/tasks/DumpMode';
+import BulkInput from '@/components/tasks/BulkInput';
+// V8 New Components
+import TaskHeader from '@/components/tasks/TaskHeader';
+import TaskTabs, { TaskTab } from '@/components/tasks/TaskTabs';
+import TaskListPane from '@/components/tasks/TaskListPane';
+import TaskEditModal from '@/components/tasks/TaskEditModal';
+import FocusGate from '@/components/tasks/FocusGate';
+import FocusCards from '@/components/tasks/FocusCards';
+import QuickCapture from '@/components/tasks/QuickCapture';
+import MorningDashboard from '@/components/tasks/MorningDashboard';
+import BallTracker from '@/components/tasks/BallTracker';
+import BallPassModal from '@/components/tasks/BallPassModal';
+import BrainDumpModal from '@/components/tasks/BrainDumpModal';
+import WeeklyReviewModal from '@/components/tasks/WeeklyReviewModal';
+import StalePane from '@/components/tasks/StalePane';
+import TrashPane from '@/components/tasks/TrashPane';
+import StaleAlert from '@/components/tasks/StaleAlert';
+import TagSummary from '@/components/tasks/TagSummary';
+import ShortcutsOverlay from '@/components/tasks/ShortcutsOverlay';
 import { getTagStyle } from '@/lib/tags';
 
 type TopTab = 'task' | 'clip' | 'idea';
-type SubTab = 'focus' | 'all' | 'done' | 'kanban';
+
+function isThisWeekStale(task: TaskItem): boolean {
+  if (task.status === 'done' || task.status === 'deleted') return false;
+  const updated = new Date(task.updated_at);
+  return Math.floor((Date.now() - updated.getTime()) / 86400000) >= 7;
+}
+
+function isMondayAndNoReview(): boolean {
+  return new Date().getDay() === 1;
+}
 
 export default function TasksPage() {
-  const [items, setItems] = useState<Item[]>([]);
+  const [items, setItems] = useState<TaskItem[]>([]);
   const [chatCounts, setChatCounts] = useState<Record<string, number>>({});
   const [topTab, setTopTab] = useState<TopTab>('task');
-  const [subTab, setSubTab] = useState<SubTab>('focus');
-  const [showBulk, setShowBulk] = useState(false);
-  const [showDump, setShowDump] = useState(false);
-  const [selectedItem, setSelectedItem] = useState<Item | null>(null);
-  const [userId, setUserId] = useState<string | null>(null);
+  const [taskTab, setTaskTab] = useState<TaskTab>('dashboard');
   const [tagFilter, setTagFilter] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
+  const [userId, setUserId] = useState<string | null>(null);
 
-  // Init
+  // V8 Modal states
+  const [selectedTask, setSelectedTask] = useState<TaskItem | null>(null);
+  const [selectedItem, setSelectedItem] = useState<Item | null>(null); // for clip/idea
+  const [showFocusGate, setShowFocusGate] = useState(false);
+  const [showDump, setShowDump] = useState(false);
+  const [showReview, setShowReview] = useState(false);
+  const [passBallTask, setPassBallTask] = useState<TaskItem | null>(null);
+  const [showShortcuts, setShowShortcuts] = useState(false);
+  const [showBulk, setShowBulk] = useState(false);
+
+  // === Init ===
   useEffect(() => {
     const init = async () => {
       const { data: { user } } = await supabase.auth.getUser();
       if (user) {
         setUserId(user.id);
-        loadItems(user.id);
+        await loadItems(user.id);
         loadChatCounts(user.id);
       }
     };
     init();
-    scheduleNotifications();
   }, []);
 
+  // Check focus gate & weekly review after items load
+  useEffect(() => {
+    if (items.length === 0) return;
+    const today = new Date().toISOString().slice(0, 10);
+    const hasTodayFocus = items.some(i =>
+      (i as TaskItem).is_today_focus && (i as TaskItem).focus_selected_date === today && i.status !== 'done'
+    );
+    if (!hasTodayFocus && items.filter(i => i.type === 'task' && i.status !== 'done').length > 0) {
+      setShowFocusGate(true);
+    }
+    // Monday weekly review prompt
+    if (isMondayAndNoReview()) {
+      setTimeout(() => setShowReview(true), 1500);
+    }
+  }, [items.length]);
+
+  // Keyboard shortcuts
+  useEffect(() => {
+    const handleKey = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      switch (e.key) {
+        case '?': setShowShortcuts(s => !s); break;
+        case 'd': case 'D': setShowDump(true); break;
+        case 'Escape': setShowShortcuts(false); setShowDump(false); setShowReview(false); break;
+        case '1': setTaskTab('dashboard'); break;
+        case '2': setTaskTab('list'); break;
+        case '3': setTaskTab('ball'); break;
+        case '4': setTaskTab('kanban'); break;
+      }
+    };
+    window.addEventListener('keydown', handleKey);
+    return () => window.removeEventListener('keydown', handleKey);
+  }, []);
+
+  // === Data Loading ===
   const loadItems = async (uid: string) => {
     const { data } = await supabase
       .from('items')
@@ -58,19 +119,14 @@ export default function TasksPage() {
       .eq('user_id', uid)
       .order('sort_order')
       .order('created_at', { ascending: false });
-    if (data) setItems(data);
+    if (data) setItems(data as TaskItem[]);
   };
 
   const loadChatCounts = async (uid: string) => {
-    const { data } = await supabase
-      .from('item_chats')
-      .select('item_id')
-      .eq('user_id', uid);
+    const { data } = await supabase.from('item_chats').select('item_id').eq('user_id', uid);
     if (data) {
       const counts: Record<string, number> = {};
-      data.forEach((c: any) => {
-        counts[c.item_id] = (counts[c.item_id] || 0) + 1;
-      });
+      data.forEach((c: any) => { counts[c.item_id] = (counts[c.item_id] || 0) + 1; });
       setChatCounts(counts);
     }
   };
@@ -79,335 +135,186 @@ export default function TasksPage() {
     if (userId) await loadItems(userId);
   }, [userId]);
 
-  // Quick add with prefix detection
-  const handleQuickAdd = useCallback(async (title: string, tags: string[]) => {
-    if (!userId) return;
-
-    // Check for type prefix shortcuts
-    let itemType: 'task' | 'clip' | 'idea' = 'task';
-    let cleanTitle = title;
-
-    if (title.startsWith('📌') || title.startsWith('📌 ')) {
-      itemType = 'clip';
-      cleanTitle = title.replace(/^📌\s*/, '').trim();
-    } else if (title.startsWith('💡') || title.startsWith('💡 ')) {
-      itemType = 'idea';
-      cleanTitle = title.replace(/^💡\s*/, '').trim();
-    }
-
-    // Existing URL detection for clips
-    const urlMatch = cleanTitle.match(/(https?:\/\/[^\s]+)/);
-    let linkUrl = null;
-    let linkTitle = null;
-    let linkThumbnail = null;
-
-    if (urlMatch && itemType === 'task') {
-      itemType = 'clip';
-      linkUrl = urlMatch[1];
-      try {
-        const ogpRes = await fetch(`/api/ogp?url=${encodeURIComponent(linkUrl)}`);
-        const ogp = await ogpRes.json();
-        if (ogp.title) linkTitle = ogp.title;
-        if (ogp.image) linkThumbnail = ogp.image;
-      } catch {}
-    } else if (urlMatch && itemType === 'clip') {
-      linkUrl = urlMatch[1];
-      try {
-        const ogpRes = await fetch(`/api/ogp?url=${encodeURIComponent(linkUrl)}`);
-        const ogp = await ogpRes.json();
-        if (ogp.title) linkTitle = ogp.title;
-        if (ogp.image) linkThumbnail = ogp.image;
-      } catch {}
-    }
-
-    if (tags.includes('アイデア')) itemType = 'idea';
-
-    const insertData: Record<string, any> = {
-      user_id: userId,
-      type: itemType,
-      title: linkTitle || cleanTitle,
-      tags,
-      link_url: linkUrl,
-      link_title: linkTitle,
-      link_thumbnail: linkThumbnail,
+  // === Mutations ===
+  const handleComplete = useCallback(async (id: string) => {
+    const item = items.find(i => i.id === id);
+    if (!item) return;
+    const newStatus = item.status === 'done' ? 'inbox' : 'done';
+    const updates: any = {
+      status: newStatus,
+      updated_at: new Date().toISOString(),
+      completed_at: newStatus === 'done' ? new Date().toISOString() : null,
     };
+    const { data } = await supabase.from('items').update(updates).eq('id', id).select().single();
+    if (data) setItems(prev => prev.map(i => i.id === id ? data as TaskItem : i));
+  }, [items]);
 
-    // If clip from prefix, also set url field
-    if (itemType === 'clip' && linkUrl) {
-      insertData.url = linkUrl;
-    }
-
-    const { data, error } = await supabase
-      .from('items')
-      .insert(insertData)
-      .select()
-      .single();
-
-    if (error) {
-      showToast('追加に失敗しました', 'error');
-    } else if (data) {
-      setItems(prev => [data, ...prev]);
-      showToast('追加しました', 'success');
-    }
-  }, [userId]);
-
-  // Bulk add
-  const handleBulkAdd = useCallback(async (bulkItems: { title: string; tags: string[] }[]) => {
-    if (!userId) return;
-
-    const inserts = bulkItems.map(bi => ({
-      user_id: userId,
-      type: bi.tags.includes('アイデア') ? 'idea' : 'task' as const,
-      title: bi.title,
-      tags: bi.tags,
-    }));
-
-    const { data, error } = await supabase
-      .from('items')
-      .insert(inserts)
-      .select();
-
-    if (error) {
-      showToast('追加に失敗しました', 'error');
-    } else if (data) {
-      setItems(prev => [...data, ...prev]);
-      showToast(`${data.length}件追加しました`, 'success');
-    }
-  }, [userId]);
-
-  // Image paste
-  const handleImagePaste = useCallback(async (file: File) => {
-    if (!userId) return;
-
-    let imageUrl: string;
-    if (file.size < 500 * 1024) {
-      imageUrl = await new Promise<string>((resolve) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result as string);
-        reader.readAsDataURL(file);
-      });
-    } else {
-      const ext = file.name.split('.').pop() || 'png';
-      const fileName = `${userId}/${Date.now()}.${ext}`;
-      const { error: uploadError } = await supabase.storage
-        .from('items')
-        .upload(fileName, file);
-      if (uploadError) {
-        showToast('画像のアップロードに失敗しました', 'error');
-        return;
-      }
-      const { data: urlData } = supabase.storage.from('items').getPublicUrl(fileName);
-      imageUrl = urlData.publicUrl;
-    }
-
-    const { data, error } = await supabase
-      .from('items')
-      .insert({
-        user_id: userId,
-        type: 'clip',
-        title: 'スクリーンショット',
-        image_url: imageUrl,
-      })
-      .select()
-      .single();
-
-    if (error) {
-      showToast('保存に失敗しました', 'error');
-    } else if (data) {
-      setItems(prev => [data, ...prev]);
-      showToast('画像を保存しました', 'success');
-    }
-  }, [userId]);
-
-  // Status change
   const handleStatusChange = useCallback(async (id: string, status: ItemStatus) => {
     const updates: any = { status, updated_at: new Date().toISOString() };
     if (status === 'done') updates.completed_at = new Date().toISOString();
     else updates.completed_at = null;
+    const { data } = await supabase.from('items').update(updates).eq('id', id).select().single();
+    if (data) setItems(prev => prev.map(i => i.id === id ? data as TaskItem : i));
+  }, []);
 
+  const handleDelete = useCallback(async (id: string) => {
+    // Soft delete: move to 'deleted' status
     const { data } = await supabase
       .from('items')
-      .update(updates)
+      .update({ status: 'deleted', updated_at: new Date().toISOString() })
       .eq('id', id)
       .select()
       .single();
-
     if (data) {
-      setItems(prev => prev.map(i => i.id === id ? data : i));
+      setItems(prev => prev.map(i => i.id === id ? data as TaskItem : i));
+      setSelectedTask(null);
     }
   }, []);
 
-  const handleComplete = useCallback(async (id: string) => {
-    await handleStatusChange(id, 'done');
-  }, [handleStatusChange]);
-
-  const handleToggleComplete = useCallback(async (id: string) => {
-    const item = items.find(i => i.id === id);
-    if (!item) return;
-    const newStatus = item.status === 'done' ? 'inbox' : 'done';
-    await handleStatusChange(id, newStatus);
-  }, [items, handleStatusChange]);
-
-  // Delete
-  const handleDelete = useCallback(async (id: string) => {
-    await supabase.from('items').delete().eq('id', id);
+  const handleHardDelete = useCallback((id: string) => {
     setItems(prev => prev.filter(i => i.id !== id));
-    setSelectedItem(null);
   }, []);
 
-  // Update item
-  const handleItemUpdate = useCallback((updated: Item) => {
+  const handleTaskSave = useCallback((updated: TaskItem) => {
     setItems(prev => prev.map(i => i.id === updated.id ? updated : i));
+    setSelectedTask(updated);
+  }, []);
+
+  const handleItemUpdate = useCallback((updated: Item) => {
+    setItems(prev => prev.map(i => i.id === updated.id ? updated as TaskItem : i));
     setSelectedItem(updated);
   }, []);
 
-  // Set focus
-  const handleSetFocus = useCallback(async (id: string) => {
-    const currentFocus = items.filter(i => i.is_focus);
-    for (const fi of currentFocus) {
-      await supabase.from('items').update({ is_focus: false, focus_order: 0 }).eq('id', fi.id);
-    }
-    await supabase.from('items').update({ is_focus: true, focus_order: 1, status: 'today' }).eq('id', id);
+  const handleRestoreTask = useCallback((updated: TaskItem) => {
+    setItems(prev => prev.map(i => i.id === updated.id ? updated : i));
+  }, []);
+
+  const handleFocusGateComplete = useCallback(async (selectedIds: string[]) => {
+    setShowFocusGate(false);
     await reloadItems();
-    setSelectedItem(null);
-    setSubTab('focus');
-    showToast('☀️ フォーカスに設定しました', 'success');
-  }, [items, reloadItems]);
+    setTaskTab('list');
+    showToast(`⭐ ${selectedIds.length}つのフォーカスを設定しました`, 'success');
+  }, [reloadItems]);
 
-  // AI suggest focus
-  const handleAISuggest = useCallback(async () => {
+  const handleAdded = useCallback((newTasks: TaskItem[]) => {
+    setItems(prev => [...newTasks, ...prev]);
+  }, []);
+
+  const handleBulkAdd = useCallback(async (bulkItems: { title: string; tags: string[] }[]) => {
     if (!userId) return;
-    try {
-      const apiKey = await getApiKey();
-      if (!apiKey) {
-        showToast('APIキーが設定されていません', 'error');
-        return;
-      }
-
-      const taskItems = items.filter(i => i.type === 'task' && i.status !== 'done');
-      if (taskItems.length === 0) {
-        showToast('タスクがありません', 'info');
-        return;
-      }
-
-      const now = new Date();
-      const days = ['日曜日', '月曜日', '火曜日', '水曜日', '木曜日', '金曜日', '土曜日'];
-      const dayOfWeek = days[now.getDay()];
-      const currentTime = `${now.getHours()}:${String(now.getMinutes()).padStart(2, '0')}`;
-
-      const taskJSON = JSON.stringify(taskItems.map(i => ({
-        id: i.id,
-        title: i.title,
-        status: i.status,
-        action_type: i.action_type || 'do',
-        priority: i.priority,
-        due: i.due,
-        estimated_minutes: i.estimated_minutes,
-        project: i.project,
-      })));
-
-      const result = await callClaude({
-        task: 'taskFocus',
-        systemPrompt: 'あなたはタスク選定のアドバイザーです。指示に従いJSONで回答してください。',
-        userContent: FOCUS_SUGGEST_PROMPT(dayOfWeek, currentTime, taskJSON),
-        apiKey,
-        maxTokens: 1000,
-        temperature: 0,
-      });
-
-      const parsed = parseJSON(result.text);
-      if (!parsed?.focus || !Array.isArray(parsed.focus)) {
-        throw new Error('AI応答の解析に失敗');
-      }
-
-      const currentFocus = items.filter(i => i.is_focus);
-      for (const fi of currentFocus) {
-        await supabase.from('items').update({ is_focus: false, focus_order: 0 }).eq('id', fi.id);
-      }
-
-      for (let i = 0; i < Math.min(parsed.focus.length, 3); i++) {
-        const f = parsed.focus[i];
-        await supabase.from('items').update({
-          is_focus: true,
-          focus_order: i + 1,
-          status: 'today',
-        }).eq('id', f.task_id);
-      }
-
-      await reloadItems();
-      setSubTab('focus');
-      showToast('🤖 今日の3つを選びました', 'success');
-    } catch (err: any) {
-      console.error('AI suggest error:', err);
-      showToast('AI提案に失敗しました', 'error');
+    const inserts = bulkItems.map(bi => ({
+      user_id: userId,
+      type: (bi.tags.includes('アイデア') ? 'idea' : 'task') as 'task' | 'idea',
+      title: bi.title,
+      tags: bi.tags,
+    }));
+    const { data, error } = await supabase.from('items').insert(inserts).select();
+    if (error) { showToast('追加に失敗しました', 'error'); return; }
+    if (data) {
+      setItems(prev => [...(data as TaskItem[]), ...prev]);
+      showToast(`${data.length}件追加しました`, 'success');
     }
-  }, [items, userId, reloadItems]);
+  }, [userId]);
 
-  // Convert stock/spark to task
+  const _handleQuickAdd = useCallback(async (title: string, tags: string[]) => {
+    if (!userId) return;
+    let itemType: 'task' | 'clip' | 'idea' = 'task';
+    let cleanTitle = title;
+    if (title.startsWith('📌')) { itemType = 'clip'; cleanTitle = title.replace(/^📌\s*/, ''); }
+    else if (title.startsWith('💡')) { itemType = 'idea'; cleanTitle = title.replace(/^💡\s*/, ''); }
+    if (tags.includes('アイデア')) itemType = 'idea';
+
+    const { data, error } = await supabase
+      .from('items')
+      .insert({ user_id: userId, type: itemType, title: cleanTitle, tags })
+      .select()
+      .single();
+    if (error) { showToast('追加に失敗しました', 'error'); return; }
+    if (data) { setItems(prev => [data as TaskItem, ...prev]); showToast('追加しました', 'success'); }
+  }, [userId]);
+
   const handleConvertToTask = useCallback(async (item: Item) => {
-    const titleSuffix = item.title.endsWith('する') ? '' : 'する';
-    const taskTitle = item.type === 'idea'
-      ? `${item.title}を検討${titleSuffix ? '' : ''}`
-      : item.title;
-
-    const updates: Record<string, any> = {
-      type: 'task',
-      title: taskTitle.endsWith('する') ? taskTitle : `${taskTitle}を実行する`,
-      status: 'inbox',
-      action_type: 'do',
-      updated_at: new Date().toISOString(),
-    };
-
-    // Carry over body content
-    if (item.type === 'idea' && item.body) {
-      updates.body = item.body;
-    } else if (item.type === 'clip') {
-      const memoNote = item.memo ? `\n\nストックメモ: ${item.memo}` : '';
-      const urlNote = (item.url || item.link_url) ? `\n\nURL: ${item.url || item.link_url}` : '';
-      updates.body = (item.body || '') + urlNote + memoNote;
-    }
-
+    const taskTitle = item.title.endsWith('する') ? item.title : `${item.title}を実行する`;
     const { data } = await supabase
       .from('items')
-      .update(updates)
+      .update({ type: 'task', title: taskTitle, status: 'inbox', action_type: 'do', updated_at: new Date().toISOString() })
       .eq('id', item.id)
       .select()
       .single();
-
     if (data) {
-      setItems(prev => prev.map(i => i.id === item.id ? data : i));
-      setSelectedItem(data);
+      setItems(prev => prev.map(i => i.id === item.id ? data as TaskItem : i));
+      setSelectedItem(null);
       setTopTab('task');
       showToast('🔥 タスクに変換しました', 'success');
     }
   }, []);
 
-  // === DERIVED DATA ===
+  const _handleAISuggest = useCallback(async () => {
+    if (!userId) return;
+    try {
+      const apiKey = await getApiKey();
+      if (!apiKey) { showToast('APIキーが設定されていません', 'error'); return; }
+      const taskItems = items.filter(i => i.type === 'task' && i.status !== 'done' && i.status !== 'deleted');
+      if (taskItems.length === 0) { showToast('タスクがありません', 'info'); return; }
+      const now = new Date();
+      const days = ['日曜日', '月曜日', '火曜日', '水曜日', '木曜日', '金曜日', '土曜日'];
+      const dayOfWeek = days[now.getDay()];
+      const currentTime = `${now.getHours()}:${String(now.getMinutes()).padStart(2, '0')}`;
+      const taskJSON = JSON.stringify(taskItems.map(i => ({
+        id: i.id, title: i.title, status: i.status,
+        action_type: i.action_type || 'do', priority: i.priority,
+        due: i.due, estimated_minutes: i.estimated_minutes, project: i.project,
+      })));
+      const result = await callClaude({
+        task: 'taskFocus',
+        systemPrompt: 'あなたはタスク選定のアドバイザーです。指示に従いJSONで回答してください。',
+        userContent: FOCUS_SUGGEST_PROMPT(dayOfWeek, currentTime, taskJSON),
+        apiKey, maxTokens: 1000, temperature: 0,
+      });
+      const parsed = parseJSON(result.text);
+      if (!parsed?.focus || !Array.isArray(parsed.focus)) throw new Error('AI応答の解析に失敗');
+      // Clear existing today focus
+      const today = new Date().toISOString().slice(0, 10);
+      const currentFocus = items.filter(i => (i as TaskItem).is_today_focus);
+      for (const fi of currentFocus) {
+        await supabase.from('items').update({ is_today_focus: false }).eq('id', fi.id);
+      }
+      for (let i = 0; i < Math.min(parsed.focus.length, 3); i++) {
+        const f = parsed.focus[i];
+        await supabase.from('items').update({
+          is_today_focus: true, focus_selected_date: today, is_focus: true, focus_order: i + 1, status: 'today',
+        }).eq('id', f.task_id);
+      }
+      await reloadItems();
+      showToast('🤖 今日の3つを選びました', 'success');
+    } catch {
+      showToast('AI提案に失敗しました', 'error');
+    }
+  }, [items, userId, reloadItems]);
 
+  // === Derived Data ===
   const taskItems = items.filter(i => i.type === 'task');
   const clipItems = items.filter(i => i.type === 'clip');
   const ideaItems = items.filter(i => i.type === 'idea');
 
-  // Focus items
-  const focusItems = getFocusItems(taskItems);
+  const today = new Date().toISOString().slice(0, 10);
+  const todayFocusTasks = taskItems.filter(i =>
+    (i as TaskItem).is_today_focus && (i as TaskItem).focus_selected_date === today && i.status !== 'done'
+  );
+  const otherBallTasks = taskItems.filter(i =>
+    (i as TaskItem).ball_holder === 'other' && i.status !== 'done' && i.status !== 'deleted'
+  );
+  const staleTasks = taskItems.filter(isThisWeekStale);
+  const activeTasks = taskItems.filter(i => i.status !== 'deleted');
 
-  // Today's progress
-  const today = new Date().toDateString();
-  const completedToday = taskItems.filter(i =>
-    i.status === 'done' && i.completed_at && new Date(i.completed_at).toDateString() === today
-  ).length;
-  const totalToday = completedToday + focusItems.length;
+  const taskCount = taskItems.filter(i => i.status !== 'done' && i.status !== 'deleted').length;
 
-  // Filtered items for stock/spark tabs
   const filteredClips = clipItems.filter(i => {
     if (tagFilter && !i.tags.includes(tagFilter)) return false;
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
-      const matchTitle = i.title.toLowerCase().includes(q);
-      const matchMemo = (i.memo || '').toLowerCase().includes(q);
-      const matchTags = i.tags.some(t => t.toLowerCase().includes(q));
-      const matchUrl = (i.url || i.link_url || '').toLowerCase().includes(q);
-      return matchTitle || matchMemo || matchTags || matchUrl;
+      return i.title.toLowerCase().includes(q) || (i.memo || '').toLowerCase().includes(q)
+        || i.tags.some(t => t.toLowerCase().includes(q)) || (i.url || i.link_url || '').toLowerCase().includes(q);
     }
     return true;
   });
@@ -416,48 +323,29 @@ export default function TasksPage() {
     if (tagFilter && !i.tags.includes(tagFilter)) return false;
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
-      const matchTitle = i.title.toLowerCase().includes(q);
-      const matchBody = (i.body || '').toLowerCase().includes(q);
-      const matchTags = i.tags.some(t => t.toLowerCase().includes(q));
-      return matchTitle || matchBody || matchTags;
+      return i.title.toLowerCase().includes(q) || (i.body || '').toLowerCase().includes(q)
+        || i.tags.some(t => t.toLowerCase().includes(q));
     }
     return true;
   });
 
-  // Tags for filter
-  const stockTags = Array.from(new Set(clipItems.flatMap(i => i.tags)));
-  const sparkTags = Array.from(new Set(ideaItems.flatMap(i => i.tags)));
-  const currentTabTags = topTab === 'clip' ? stockTags : topTab === 'idea' ? sparkTags : [];
-
-  // Task count = non-done
-  const taskCount = taskItems.filter(i => i.status !== 'done').length;
+  // List tab: filter by status tabs
+  const listStatusFilter = ['inbox', 'this_week', 'today', 'in_progress'];
+  const filteredListTasks = activeTasks.filter(i =>
+    listStatusFilter.includes(i.status) &&
+    (!tagFilter || i.tags.includes(tagFilter)) &&
+    (!searchQuery || i.title.toLowerCase().includes(searchQuery.toLowerCase()))
+  );
 
   return (
     <AuthGuard>
-      <div className="flex min-h-screen">
+      <div className="flex min-h-screen bg-paper">
         <Sidebar />
-        <main className="ml-0 md:ml-60 flex-1 min-h-screen">
-          <Topbar />
-          <div className="p-4 md:p-7 max-w-[1200px]">
-            {/* Header */}
-            <div className="flex items-center justify-between mb-5">
-              <h2 className="text-lg font-bold text-gray-900 flex items-center gap-2">
-                {topTab === 'task' ? '☀️ 今やること' : topTab === 'clip' ? '📌 ストック' : '💡 ひらめき'}
-              </h2>
-              <button
-                onClick={() => setShowDump(true)}
-                className="w-12 h-12 rounded-full flex items-center justify-center text-white shadow-lg transition hover:scale-105"
-                style={{ backgroundColor: '#1565C0' }}
-                title="脳内を吐き出す"
-              >
-                <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth={2.5} viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-                </svg>
-              </button>
-            </div>
+        <main className="ml-0 md:ml-60 flex-1 flex flex-col min-h-screen">
 
-            {/* Top tabs */}
-            <div className="flex items-center gap-4 mb-4 border-b border-gray-200">
+          {/* ===== TOP TAB BAR ===== */}
+          <div className="sticky top-0 z-40 bg-white border-b border-gray-100">
+            <div className="flex items-center gap-1 px-4 pt-3 pb-0">
               {([
                 { key: 'task' as TopTab, label: '🔥 やること', count: taskCount },
                 { key: 'clip' as TopTab, label: '📌 ストック', count: clipItems.length },
@@ -466,525 +354,337 @@ export default function TasksPage() {
                 <button
                   key={t.key}
                   onClick={() => { setTopTab(t.key); setTagFilter(null); setSearchQuery(''); }}
-                  className={`pb-2.5 text-sm font-medium border-b-2 transition ${
+                  className={`pb-2.5 px-2 text-[13px] font-medium border-b-2 transition-colors ${
                     topTab === t.key
                       ? 'border-jinden-blue text-jinden-blue'
                       : 'border-transparent text-gray-400 hover:text-gray-600'
                   }`}
                 >
                   {t.label}
-                  <span className="ml-1 text-xs opacity-60">({t.count})</span>
+                  <span className="ml-1 text-[11px] opacity-60">({t.count})</span>
                 </button>
               ))}
             </div>
-
-            {/* === TASK TAB === */}
-            {topTab === 'task' && (
-              <>
-                {/* PC Layout: two columns */}
-                <div className="hidden md:grid md:grid-cols-[400px_1fr] md:gap-8">
-                  <div>
-                    <FocusView
-                      items={taskItems}
-                      focusItems={focusItems}
-                      completedToday={completedToday}
-                      totalToday={totalToday}
-                      onComplete={handleComplete}
-                      onItemTap={setSelectedItem}
-                      onAISuggest={handleAISuggest}
-                      onGoToAll={() => setSubTab('all')}
-                    />
-                    <button
-                      onClick={() => setSubTab('kanban')}
-                      className="mt-4 text-sm text-jinden-blue hover:underline"
-                    >
-                      カンバン表示 →
-                    </button>
-                  </div>
-
-                  <div>
-                    <div className="flex items-center gap-3 mb-4">
-                      {([
-                        { key: 'all' as SubTab, label: '📋 すべて' },
-                        { key: 'done' as SubTab, label: '✅ 完了' },
-                        { key: 'kanban' as SubTab, label: '📊 カンバン' },
-                      ]).map(t => (
-                        <button
-                          key={t.key}
-                          onClick={() => setSubTab(t.key)}
-                          className={`text-sm px-3 py-1.5 rounded-lg font-medium transition ${
-                            subTab === t.key
-                              ? 'bg-gray-900 text-white'
-                              : 'text-gray-500 hover:bg-gray-100'
-                          }`}
-                        >
-                          {t.label}
-                        </button>
-                      ))}
-                    </div>
-
-                    <div className="mb-4">
-                      <QuickInput
-                        onSubmit={handleQuickAdd}
-                        onOpenBulk={() => setShowBulk(true)}
-                        onImagePaste={handleImagePaste}
-                      />
-                    </div>
-
-                    {subTab === 'all' && (
-                      <AllTasksView
-                        items={taskItems}
-                        onItemTap={setSelectedItem}
-                        onToggleComplete={handleToggleComplete}
-                      />
-                    )}
-                    {subTab === 'done' && (
-                      <CompletedView
-                        items={taskItems}
-                        onItemTap={setSelectedItem}
-                      />
-                    )}
-                    {subTab === 'kanban' && (
-                      <KanbanBoard
-                        items={taskItems.filter(i => !tagFilter || i.tags.includes(tagFilter))}
-                        chatCounts={chatCounts}
-                        onStatusChange={handleStatusChange}
-                        onCardClick={setSelectedItem}
-                      />
-                    )}
-                  </div>
-                </div>
-
-                {/* Mobile Layout */}
-                <div className="md:hidden">
-                  {subTab === 'focus' && (
-                    <FocusView
-                      items={taskItems}
-                      focusItems={focusItems}
-                      completedToday={completedToday}
-                      totalToday={totalToday}
-                      onComplete={handleComplete}
-                      onItemTap={setSelectedItem}
-                      onAISuggest={handleAISuggest}
-                      onGoToAll={() => setSubTab('all')}
-                    />
-                  )}
-                  {subTab === 'all' && (
-                    <AllTasksView
-                      items={taskItems}
-                      onItemTap={setSelectedItem}
-                      onToggleComplete={handleToggleComplete}
-                    />
-                  )}
-                  {subTab === 'done' && (
-                    <CompletedView
-                      items={taskItems}
-                      onItemTap={setSelectedItem}
-                    />
-                  )}
-                  {subTab === 'kanban' && (
-                    <KanbanBoard
-                      items={taskItems}
-                      chatCounts={chatCounts}
-                      onStatusChange={handleStatusChange}
-                      onCardClick={setSelectedItem}
-                    />
-                  )}
-                </div>
-              </>
-            )}
-
-            {/* === STOCK TAB === */}
-            {topTab === 'clip' && (
-              <>
-                {/* Search bar */}
-                <div className="mb-4">
-                  <input
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder="ストックを検索..."
-                    className="w-full text-sm border border-gray-200 rounded-xl px-4 py-2.5 outline-none focus:border-jinden-blue bg-white"
-                    style={{ fontSize: 16 }}
-                  />
-                </div>
-
-                {/* Tag filter */}
-                {currentTabTags.length > 0 && (
-                  <div className="flex flex-nowrap gap-1.5 mb-4 overflow-x-auto pb-1 -mx-1 px-1">
-                    <button
-                      onClick={() => setTagFilter(null)}
-                      className={`text-[11px] px-2.5 py-1 rounded-full font-medium transition flex-shrink-0 ${
-                        !tagFilter ? 'bg-gray-800 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
-                      }`}
-                    >
-                      すべて
-                    </button>
-                    {currentTabTags.map(tag => (
-                      <button
-                        key={tag}
-                        onClick={() => setTagFilter(tagFilter === tag ? null : tag)}
-                        className={`text-[11px] px-2.5 py-1 rounded-full font-medium transition flex-shrink-0 ${
-                          tagFilter === tag ? 'bg-gray-800 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
-                        }`}
-                      >
-                        #{tag}
-                      </button>
-                    ))}
-                  </div>
-                )}
-
-                {/* Stock cards */}
-                {filteredClips.length === 0 ? (
-                  <StockEmptyState />
-                ) : (
-                  <div className="space-y-3">
-                    {filteredClips.map(item => (
-                      <StockCard
-                        key={item.id}
-                        item={item}
-                        onTap={() => setSelectedItem(item)}
-                      />
-                    ))}
-                  </div>
-                )}
-              </>
-            )}
-
-            {/* === SPARK TAB === */}
-            {topTab === 'idea' && (
-              <>
-                {/* Search bar */}
-                <div className="mb-4">
-                  <input
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder="ひらめきを検索..."
-                    className="w-full text-sm border border-gray-200 rounded-xl px-4 py-2.5 outline-none focus:border-jinden-blue bg-white"
-                    style={{ fontSize: 16 }}
-                  />
-                </div>
-
-                {/* Tag filter */}
-                {currentTabTags.length > 0 && (
-                  <div className="flex flex-nowrap gap-1.5 mb-4 overflow-x-auto pb-1 -mx-1 px-1">
-                    <button
-                      onClick={() => setTagFilter(null)}
-                      className={`text-[11px] px-2.5 py-1 rounded-full font-medium transition flex-shrink-0 ${
-                        !tagFilter ? 'bg-gray-800 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
-                      }`}
-                    >
-                      すべて
-                    </button>
-                    {currentTabTags.map(tag => (
-                      <button
-                        key={tag}
-                        onClick={() => setTagFilter(tagFilter === tag ? null : tag)}
-                        className={`text-[11px] px-2.5 py-1 rounded-full font-medium transition flex-shrink-0 ${
-                          tagFilter === tag ? 'bg-gray-800 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
-                        }`}
-                      >
-                        #{tag}
-                      </button>
-                    ))}
-                  </div>
-                )}
-
-                {/* Spark cards */}
-                {filteredIdeas.length === 0 ? (
-                  <SparkEmptyState />
-                ) : (
-                  <div className="space-y-3">
-                    {filteredIdeas.map(item => (
-                      <SparkCard
-                        key={item.id}
-                        item={item}
-                        onTap={() => setSelectedItem(item)}
-                      />
-                    ))}
-                  </div>
-                )}
-              </>
-            )}
           </div>
 
-          {/* Quick Input for stock/spark on mobile */}
-          {topTab !== 'task' && (
-            <div className="mb-5 px-4 md:px-7">
-              <QuickInput
-                onSubmit={handleQuickAdd}
-                onOpenBulk={() => setShowBulk(true)}
-                onImagePaste={handleImagePaste}
+          {/* ===== TASK TAB ===== */}
+          {topTab === 'task' && (
+            <div className="flex flex-col flex-1 min-h-0">
+              {/* Task header */}
+              <TaskHeader onOpenDump={() => setShowDump(true)} onOpenReview={() => setShowReview(true)} />
+
+              {/* QuickCapture */}
+              {userId && (
+                <QuickCapture userId={userId} onAdded={handleAdded} />
+              )}
+
+              {/* Stale alert */}
+              {staleTasks.length > 0 && (
+                <StaleAlert count={staleTasks.length} onClick={() => setTaskTab('stale')} />
+              )}
+
+              {/* Focus Cards */}
+              {todayFocusTasks.length > 0 && taskTab !== 'dashboard' && (
+                <FocusCards
+                  tasks={todayFocusTasks}
+                  onComplete={handleComplete}
+                  onSelect={t => setSelectedTask(t)}
+                />
+              )}
+
+              {/* Task sub-tabs */}
+              <TaskTabs
+                activeTab={taskTab}
+                onChange={setTaskTab}
+                ballCount={otherBallTasks.length}
+                staleCount={staleTasks.length}
               />
+
+              {/* Tag filter (list tab) */}
+              {taskTab === 'list' && (
+                <TagSummary
+                  tasks={activeTasks}
+                  activeTag={tagFilter}
+                  onTagClick={setTagFilter}
+                />
+              )}
+
+              {/* Tab Content */}
+              <div className="flex-1 overflow-y-auto">
+                {taskTab === 'dashboard' && (
+                  <MorningDashboard
+                    tasks={activeTasks}
+                    todayFocusTasks={todayFocusTasks}
+                    otherBallTasks={otherBallTasks}
+                    onShowList={() => setTaskTab('list')}
+                    onAddTask={() => setShowDump(true)}
+                    onSelectTask={t => setSelectedTask(t)}
+                  />
+                )}
+
+                {taskTab === 'list' && (
+                  <TaskListPane
+                    tasks={filteredListTasks}
+                    onComplete={handleComplete}
+                    onSelect={t => setSelectedTask(t)}
+                    onPassBall={t => setPassBallTask(t)}
+                    emptyMessage="タスクがありません。QuickCaptureから追加しましょう"
+                  />
+                )}
+
+                {taskTab === 'ball' && (
+                  <BallTracker
+                    tasks={activeTasks}
+                    onSelect={t => setSelectedTask(t)}
+                    onPassBall={t => setPassBallTask(t)}
+                  />
+                )}
+
+                {taskTab === 'kanban' && (
+                  <KanbanBoard
+                    items={activeTasks as unknown as Item[]}
+                    chatCounts={chatCounts}
+                    onStatusChange={handleStatusChange}
+                    onCardClick={item => setSelectedTask(item as unknown as TaskItem)}
+                  />
+                )}
+
+                {taskTab === 'stale' && (
+                  <StalePane
+                    tasks={activeTasks}
+                    onComplete={handleComplete}
+                    onSelect={t => setSelectedTask(t)}
+                    onPassBall={t => setPassBallTask(t)}
+                  />
+                )}
+
+                {taskTab === 'trash' && (
+                  <TrashPane
+                    tasks={items}
+                    onRestore={handleRestoreTask}
+                    onHardDelete={handleHardDelete}
+                  />
+                )}
+              </div>
             </div>
           )}
-        </main>
 
-        {/* Mobile bottom tabs (task tab only) */}
-        {topTab === 'task' && (
-          <div className="md:hidden fixed bottom-0 left-0 right-0 z-50 bg-white border-t border-gray-200 flex items-center justify-around py-2 pb-[env(safe-area-inset-bottom)]">
-            {([
-              { key: 'focus' as SubTab, label: '☀️フォーカス' },
-              { key: 'all' as SubTab, label: '📋すべて' },
-              { key: 'done' as SubTab, label: '✅完了' },
-            ]).map(t => (
-              <button
-                key={t.key}
-                onClick={() => setSubTab(t.key)}
-                className={`text-xs font-medium px-3 py-2 rounded-lg transition min-h-[44px] ${
-                  subTab === t.key
-                    ? 'text-jinden-blue bg-mist'
-                    : 'text-gray-400'
-                }`}
-              >
-                {t.label}
-              </button>
-            ))}
+          {/* ===== CLIP TAB ===== */}
+          {topTab === 'clip' && (
+            <div className="flex flex-col flex-1">
+              {/* Search */}
+              <div className="px-4 py-3 border-b border-gray-100 bg-white">
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={e => setSearchQuery(e.target.value)}
+                  placeholder="ストックを検索..."
+                  className="w-full text-[16px] bg-gray-50 border border-gray-200 rounded-xl px-4 py-2.5 focus:outline-none focus:border-jinden-blue"
+                />
+              </div>
+
+              {/* Tag filter */}
+              <TagSummary
+                tasks={clipItems as unknown as TaskItem[]}
+                activeTag={tagFilter}
+                onTagClick={setTagFilter}
+              />
+
+              {/* Clip list */}
+              <div className="flex-1 overflow-y-auto p-4 space-y-2">
+                {filteredClips.length === 0 ? (
+                  <div className="text-center text-gray-400 py-16">
+                    <div className="text-4xl mb-2">📌</div>
+                    <p className="text-[14px]">ストックはありません</p>
+                  </div>
+                ) : (
+                  filteredClips.map(item => (
+                    <div
+                      key={item.id}
+                      onClick={() => setSelectedItem(item)}
+                      className="bg-white rounded-xl border border-gray-100 p-3 cursor-pointer hover:border-gray-200 transition-colors"
+                    >
+                      <div className="flex items-start gap-3">
+                        {item.link_thumbnail && (
+                          <img src={item.link_thumbnail} alt="" className="w-12 h-12 rounded-lg object-cover flex-shrink-0" />
+                        )}
+                        <div className="flex-1 min-w-0">
+                          <p className="text-[14px] text-ink line-clamp-2">{item.title}</p>
+                          {item.url && <p className="text-[11px] text-gray-400 mt-0.5 truncate">{item.url}</p>}
+                          <div className="flex flex-wrap gap-1 mt-1">
+                            {item.tags.map(t => (
+                              <span key={t} className="text-[11px] px-1.5 py-0.5 rounded-full" style={getTagStyle(t)}>#{t}</span>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* ===== IDEA TAB ===== */}
+          {topTab === 'idea' && (
+            <div className="flex flex-col flex-1">
+              {/* Search */}
+              <div className="px-4 py-3 border-b border-gray-100 bg-white">
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={e => setSearchQuery(e.target.value)}
+                  placeholder="ひらめきを検索..."
+                  className="w-full text-[16px] bg-gray-50 border border-gray-200 rounded-xl px-4 py-2.5 focus:outline-none focus:border-jinden-blue"
+                />
+              </div>
+
+              {/* Tag filter */}
+              <TagSummary
+                tasks={ideaItems as unknown as TaskItem[]}
+                activeTag={tagFilter}
+                onTagClick={setTagFilter}
+              />
+
+              {/* Idea list */}
+              <div className="flex-1 overflow-y-auto p-4 space-y-2">
+                {filteredIdeas.length === 0 ? (
+                  <div className="text-center text-gray-400 py-16">
+                    <div className="text-4xl mb-2">💡</div>
+                    <p className="text-[14px]">ひらめきはありません</p>
+                  </div>
+                ) : (
+                  filteredIdeas.map(item => (
+                    <div
+                      key={item.id}
+                      onClick={() => setSelectedItem(item)}
+                      className="bg-white rounded-xl border border-gray-100 p-3 cursor-pointer hover:border-gray-200 transition-colors"
+                    >
+                      <p className="text-[14px] text-ink">{item.title}</p>
+                      {item.body && <p className="text-[12px] text-gray-500 mt-1 line-clamp-2">{item.body}</p>}
+                      <div className="flex flex-wrap gap-1 mt-1.5">
+                        {item.tags.map(t => (
+                          <span key={t} className="text-[11px] px-1.5 py-0.5 rounded-full" style={getTagStyle(t)}>#{t}</span>
+                        ))}
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Shortcuts hint */}
+          <div className="hidden md:flex items-center justify-end px-4 py-2 border-t border-gray-100 bg-white">
+            <button
+              onClick={() => setShowShortcuts(true)}
+              className="text-[11px] text-gray-400 hover:text-gray-600 transition-colors"
+            >
+              ⌨️ ?でショートカット表示
+            </button>
           </div>
-        )}
+        </main>
+      </div>
 
-        {/* Bulk Input Modal */}
+      {/* ===== MODALS ===== */}
+
+      {/* Focus Gate */}
+      {showFocusGate && (
+        <FocusGate
+          tasks={taskItems}
+          onComplete={handleFocusGateComplete}
+          onSkip={() => setShowFocusGate(false)}
+        />
+      )}
+
+      {/* Task Edit Modal (V8) */}
+      {selectedTask && topTab === 'task' && (
+        <TaskEditModal
+          task={selectedTask}
+          onClose={() => setSelectedTask(null)}
+          onSave={handleTaskSave}
+          onDelete={handleDelete}
+        />
+      )}
+
+      {/* Clip Detail Sheet */}
+      {selectedItem && selectedItem.type === 'clip' && (
+        <StockDetailSheet
+          item={selectedItem}
+          onClose={() => setSelectedItem(null)}
+          onUpdate={handleItemUpdate}
+          onDelete={async (id) => {
+            await supabase.from('items').delete().eq('id', id);
+            setItems(prev => prev.filter(i => i.id !== id));
+            setSelectedItem(null);
+          }}
+          onConvertToTask={handleConvertToTask}
+        />
+      )}
+
+      {/* Idea Detail Sheet */}
+      {selectedItem && selectedItem.type === 'idea' && (
+        <SparkDetailSheet
+          item={selectedItem}
+          onClose={() => setSelectedItem(null)}
+          onUpdate={handleItemUpdate}
+          onDelete={async (id) => {
+            await supabase.from('items').delete().eq('id', id);
+            setItems(prev => prev.filter(i => i.id !== id));
+            setSelectedItem(null);
+          }}
+          onConvertToTask={handleConvertToTask}
+        />
+      )}
+
+      {/* Brain Dump */}
+      {showDump && userId && (
+        <BrainDumpModal
+          userId={userId}
+          onClose={() => setShowDump(false)}
+          onTasksCreated={async () => {
+            await reloadItems();
+            setShowDump(false);
+          }}
+        />
+      )}
+
+      {/* Weekly Review */}
+      {showReview && userId && (
+        <WeeklyReviewModal
+          items={taskItems}
+          userId={userId}
+          onClose={() => setShowReview(false)}
+        />
+      )}
+
+      {/* Ball Pass */}
+      {passBallTask && (
+        <BallPassModal
+          task={passBallTask}
+          onClose={() => setPassBallTask(null)}
+          onSave={updated => {
+            setItems(prev => prev.map(i => i.id === updated.id ? updated : i));
+            setPassBallTask(null);
+          }}
+        />
+      )}
+
+      {/* Shortcuts */}
+      {showShortcuts && (
+        <ShortcutsOverlay onClose={() => setShowShortcuts(false)} />
+      )}
+
+      {/* Bulk Input (legacy) */}
+      {showBulk && (
         <BulkInput
           isOpen={showBulk}
           onClose={() => setShowBulk(false)}
           onSubmit={handleBulkAdd}
         />
+      )}
 
-        {/* Dump Mode */}
-        {userId && (
-          <DumpMode
-            isOpen={showDump}
-            onClose={() => setShowDump(false)}
-            onTasksCreated={reloadItems}
-            userId={userId}
-          />
-        )}
-
-        {/* Detail sheets — type-specific */}
-        {selectedItem && selectedItem.type === 'task' && (
-          <TaskDetailSheet
-            item={selectedItem}
-            onClose={() => setSelectedItem(null)}
-            onUpdate={handleItemUpdate}
-            onDelete={handleDelete}
-            onSetFocus={handleSetFocus}
-          />
-        )}
-        {selectedItem && selectedItem.type === 'clip' && (
-          <StockDetailSheet
-            item={selectedItem}
-            onClose={() => setSelectedItem(null)}
-            onUpdate={handleItemUpdate}
-            onDelete={handleDelete}
-            onConvertToTask={handleConvertToTask}
-          />
-        )}
-        {selectedItem && selectedItem.type === 'idea' && (
-          <SparkDetailSheet
-            item={selectedItem}
-            onClose={() => setSelectedItem(null)}
-            onUpdate={handleItemUpdate}
-            onDelete={handleDelete}
-            onConvertToTask={handleConvertToTask}
-          />
-        )}
-
-        <ToastContainer />
-      </div>
+      <ToastContainer />
     </AuthGuard>
   );
-}
-
-// === STOCK CARD ===
-
-function StockCard({ item, onTap }: { item: Item; onTap: () => void }) {
-  const getDomain = (urlStr: string) => {
-    try { return new URL(urlStr).hostname; } catch { return urlStr; }
-  };
-
-  const displayUrl = item.url || item.link_url;
-
-  return (
-    <div
-      onClick={onTap}
-      className="bg-white border border-gray-200 rounded-xl p-4 cursor-pointer hover:shadow-sm transition"
-    >
-      <div className="text-sm font-medium text-gray-800 leading-snug">
-        📌 {item.title}
-      </div>
-
-      {displayUrl && (
-        <div className="flex items-center gap-1 mt-1.5">
-          <span className="text-[11px] text-jinden-blue truncate">
-            🔗 {getDomain(displayUrl)}
-          </span>
-        </div>
-      )}
-
-      {item.memo && (
-        <div className="text-xs text-gray-500 mt-2 line-clamp-2">
-          {item.memo}
-        </div>
-      )}
-
-      <div className="flex items-center gap-1.5 mt-2.5 flex-wrap">
-        {item.tags.map(tag => {
-          const style = getTagStyle(tag);
-          return (
-            <span
-              key={tag}
-              className="text-[10px] px-1.5 py-0.5 rounded-full font-medium"
-              style={{ color: style.color, backgroundColor: style.bg }}
-            >
-              #{tag}
-            </span>
-          );
-        })}
-        <span className="text-[10px] text-gray-400 ml-auto">
-          {new Date(item.created_at).toLocaleDateString('ja-JP')}
-        </span>
-      </div>
-    </div>
-  );
-}
-
-// === SPARK CARD ===
-
-function SparkCard({ item, onTap }: { item: Item; onTap: () => void }) {
-  return (
-    <div
-      onClick={onTap}
-      className="bg-white border border-gray-200 rounded-xl p-4 cursor-pointer hover:shadow-sm transition"
-    >
-      <div className="text-sm font-medium text-gray-800 leading-snug">
-        💡 {item.title}
-      </div>
-
-      {item.body && (
-        <div className="text-xs text-gray-500 mt-2 line-clamp-3 whitespace-pre-wrap">
-          {item.body}
-        </div>
-      )}
-
-      <div className="flex items-center gap-1.5 mt-2.5 flex-wrap">
-        {item.tags.map(tag => {
-          const style = getTagStyle(tag);
-          return (
-            <span
-              key={tag}
-              className="text-[10px] px-1.5 py-0.5 rounded-full font-medium"
-              style={{ color: style.color, backgroundColor: style.bg }}
-            >
-              #{tag}
-            </span>
-          );
-        })}
-        {item.twin_candidate && (
-          <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-purple-50 text-purple-600 font-medium">
-            🧠
-          </span>
-        )}
-        <span className="text-[10px] text-gray-400 ml-auto">
-          {new Date(item.created_at).toLocaleDateString('ja-JP')}
-        </span>
-      </div>
-    </div>
-  );
-}
-
-// === EMPTY STATES ===
-
-function StockEmptyState() {
-  return (
-    <div className="text-center py-16">
-      <div className="text-4xl mb-4">📌</div>
-      <div className="text-sm text-gray-500 leading-relaxed">
-        気になった記事やツールをストック
-      </div>
-      <div className="text-xs text-gray-400 mt-2 leading-relaxed">
-        ＋ボタンからURLやメモを投げ込むと<br />
-        自動で分類されるよ
-      </div>
-    </div>
-  );
-}
-
-function SparkEmptyState() {
-  return (
-    <div className="text-center py-16">
-      <div className="text-4xl mb-4">💡</div>
-      <div className="text-sm text-gray-500 leading-relaxed">
-        思いついたこと、気づいたことを<br />
-        ここに溜めておく
-      </div>
-      <div className="text-xs text-gray-400 mt-2 leading-relaxed">
-        形になりそうなら「タスクにする」<br />
-        じんでんの思考なら「思想DBに送る」
-      </div>
-    </div>
-  );
-}
-
-// === UTILITY FUNCTIONS ===
-
-function getFocusItems(items: Item[]): Item[] {
-  const nonDone = items.filter(i => i.status !== 'done');
-
-  const explicit = nonDone
-    .filter(i => i.is_focus)
-    .sort((a, b) => a.focus_order - b.focus_order);
-
-  if (explicit.length >= 3) return explicit.slice(0, 3);
-
-  const explicitIds = new Set(explicit.map(i => i.id));
-  const autoPool = nonDone
-    .filter(i => !explicitIds.has(i.id) && (i.status === 'today' || i.status === 'in_progress' || i.status === 'this_week'))
-    .sort((a, b) => {
-      const statusOrder: Record<string, number> = { today: 0, in_progress: 1, this_week: 2 };
-      const sa = statusOrder[a.status] ?? 3;
-      const sb = statusOrder[b.status] ?? 3;
-      if (sa !== sb) return sa - sb;
-
-      if (b.priority !== a.priority) return b.priority - a.priority;
-
-      const typeOrder: Record<string, number> = { do: 0, contact: 1, decide: 2, errand: 3 };
-      const ta = typeOrder[a.action_type || 'do'] ?? 3;
-      const tb = typeOrder[b.action_type || 'do'] ?? 3;
-      return ta - tb;
-    });
-
-  const needed = 3 - explicit.length;
-  return [...explicit, ...autoPool.slice(0, needed)];
-}
-
-function scheduleNotifications() {
-  if (typeof window === 'undefined') return;
-  if (!('Notification' in window)) return;
-  if (Notification.permission === 'default') {
-    Notification.requestPermission();
-    return;
-  }
-  if (Notification.permission !== 'granted') return;
-
-  const now = new Date();
-  const hours = now.getHours();
-
-  if (hours >= 8 && hours < 9) {
-    showLocalNotification('おはようございます', '今日の「1つ」を決めましょう', '/tasks');
-  } else if (hours >= 17 && hours < 18) {
-    showLocalNotification('進捗どうですか？', '今日のタスクは完了しましたか？', '/tasks');
-  } else if (hours >= 21 && hours < 22) {
-    showLocalNotification('お疲れさまでした', '今日やったことを振り返りましょう', '/tasks');
-  }
-}
-
-function showLocalNotification(title: string, body: string, _url: string) {
-  const key = `notif_${title}_${new Date().toDateString()}`;
-  if (localStorage.getItem(key)) return;
-  localStorage.setItem(key, 'true');
-
-  new Notification(title, {
-    body,
-    icon: '/icon-192.png',
-    tag: title,
-  });
 }

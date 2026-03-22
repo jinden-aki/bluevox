@@ -11,6 +11,8 @@ const MODEL_MAP = {
   taskDump: 'claude-haiku-4-5-20251001',
   inboxDump: 'claude-haiku-4-5-20251001',
   taskFocus: 'claude-haiku-4-5-20251001',
+  taskExtract: 'claude-haiku-4-5-20251001',
+  weeklyReview: 'claude-haiku-4-5-20251001',
 } as const;
 
 type TaskType = keyof typeof MODEL_MAP;
@@ -18,7 +20,7 @@ type TaskType = keyof typeof MODEL_MAP;
 interface ClaudeRequestOptions {
   task: TaskType;
   systemPrompt: string;
-  userContent: string;
+  userContent: string | any[];
   apiKey: string;
   tools?: any[];
   maxTokens?: number;
@@ -43,7 +45,9 @@ export async function callClaude(options: ClaudeRequestOptions) {
       role: 'user',
       content: [
         { type: 'text', text: systemPrompt, cache_control: { type: 'ephemeral' } },
-        { type: 'text', text: userContent }
+        ...(Array.isArray(userContent)
+          ? userContent
+          : [{ type: 'text', text: userContent }])
       ]
     }]
   };
