@@ -60,7 +60,8 @@ export default function KanbanBoard({ items, chatCounts, onStatusChange, onCardC
           return (
             <div
               key={col.key}
-              className="flex-shrink-0 w-[280px] md:w-0 md:flex-1 snap-start"
+              className="flex-shrink-0 md:w-0 md:flex-1 snap-start"
+            style={{ width: 'min(85vw, 320px)' }}
               onDragOver={handleDragOver}
               onDrop={(e) => handleDrop(e, col.key)}
             >

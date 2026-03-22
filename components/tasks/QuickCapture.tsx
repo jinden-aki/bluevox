@@ -24,9 +24,11 @@ interface ParsedCapture {
 interface QuickCaptureProps {
   userId: string;
   onAdded: (tasks: TaskItem[]) => void;
+  mobileOpen?: boolean;
+  onMobileClose?: () => void;
 }
 
-export default function QuickCapture({ userId, onAdded }: QuickCaptureProps) {
+export default function QuickCapture({ userId, onAdded, mobileOpen, onMobileClose }: QuickCaptureProps) {
   const [text, setText] = useState('');
   const [loading, setLoading] = useState(false);
   const [parsed, setParsed] = useState<ParsedCapture[] | null>(null);
@@ -100,7 +102,6 @@ export default function QuickCapture({ userId, onAdded }: QuickCaptureProps) {
         if (file) { await analyzeImage(file); return; }
       }
     }
-    // テキスト（100文字以上でAI解析）
     const pastedText = e.clipboardData.getData('text');
     if (pastedText.length >= 100) {
       e.preventDefault();
@@ -140,6 +141,7 @@ export default function QuickCapture({ userId, onAdded }: QuickCaptureProps) {
       onAdded([data as TaskItem]);
       setText('');
       showToast('追加しました', 'success');
+      onMobileClose?.();
     }
   };
 
@@ -169,6 +171,7 @@ export default function QuickCapture({ userId, onAdded }: QuickCaptureProps) {
       setParsed(null);
       setText('');
       showToast(`${data.length}件追加しました ✨`, 'success');
+      onMobileClose?.();
     }
   };
 
@@ -177,81 +180,163 @@ export default function QuickCapture({ userId, onAdded }: QuickCaptureProps) {
   };
 
   return (
-    <div className="px-4 py-3 bg-white border-b border-gray-100">
-      {!parsed ? (
-        <div
-          className={`relative rounded-xl border-2 transition-colors ${isDragOver ? 'border-jinden-blue bg-mist' : 'border-gray-200'}`}
-          onDragOver={e => { e.preventDefault(); setIsDragOver(true); }}
-          onDragLeave={() => setIsDragOver(false)}
-          onDrop={handleDrop}
-        >
-          <textarea
-            ref={textareaRef}
-            value={text}
-            onChange={e => setText(e.target.value)}
-            onPaste={handlePaste}
-            onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && text.trim() && text.length < 100) { e.preventDefault(); handleSubmit(); } }}
-            placeholder="思いついたことを投げ込む... (画像もペーストOK)"
-            className="w-full text-[16px] px-3 pt-3 pb-10 resize-none focus:outline-none bg-transparent rounded-xl"
-            rows={2}
-            disabled={loading}
-          />
-          <div className="absolute bottom-2 left-2 right-2 flex items-center justify-between">
-            <div className="flex items-center gap-1">
-              <label className="cursor-pointer text-gray-400 hover:text-gray-600 p-1 transition-colors">
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M18.375 12.739l-7.693 7.693a4.5 4.5 0 01-6.364-6.364l10.94-10.94A3 3 0 1119.5 7.372L8.552 18.32m.009-.01l-.01.01m5.699-9.941l-7.81 7.81a1.5 1.5 0 002.112 2.13" />
-                </svg>
-                <input
-                  type="file"
-                  accept="image/*"
-                  className="hidden"
-                  onChange={e => { const f = e.target.files?.[0]; if (f) analyzeImage(f); }}
-                />
-              </label>
-              {text.length >= 100 && (
-                <span className="text-[11px] text-jinden-blue bg-mist px-2 py-0.5 rounded-full">AI解析モード</span>
-              )}
+    <>
+      {/* Desktop inline capture */}
+      <div className="hidden md:block px-4 py-3 bg-white border-b border-gray-100">
+        {!parsed ? (
+          <div
+            className={`relative rounded-xl border-2 transition-colors ${isDragOver ? 'border-jinden-blue bg-mist' : 'border-gray-200'}`}
+            onDragOver={e => { e.preventDefault(); setIsDragOver(true); }}
+            onDragLeave={() => setIsDragOver(false)}
+            onDrop={handleDrop}
+          >
+            <textarea
+              ref={textareaRef}
+              value={text}
+              onChange={e => setText(e.target.value)}
+              onPaste={handlePaste}
+              onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && text.trim() && text.length < 100) { e.preventDefault(); handleSubmit(); } }}
+              placeholder="思いついたことを投げ込む... (画像もペーストOK)"
+              className="w-full text-[16px] px-3 pt-3 pb-10 resize-none focus:outline-none bg-transparent rounded-xl"
+              rows={2}
+              disabled={loading}
+            />
+            <div className="absolute bottom-2 left-2 right-2 flex items-center justify-between">
+              <div className="flex items-center gap-1">
+                <label className="cursor-pointer text-gray-400 hover:text-gray-600 p-1 transition-colors">
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={1.5} viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M18.375 12.739l-7.693 7.693a4.5 4.5 0 01-6.364-6.364l10.94-10.94A3 3 0 1119.5 7.372L8.552 18.32m.009-.01l-.01.01m5.699-9.941l-7.81 7.81a1.5 1.5 0 002.112 2.13" />
+                  </svg>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={e => { const f = e.target.files?.[0]; if (f) analyzeImage(f); }}
+                  />
+                </label>
+                {text.length >= 100 && (
+                  <span className="text-[11px] text-jinden-blue bg-mist px-2 py-0.5 rounded-full">AI解析モード</span>
+                )}
+              </div>
+              <button
+                onClick={handleSubmit}
+                disabled={loading || !text.trim()}
+                className="text-[12px] px-3 py-1 bg-jinden-blue text-white rounded-lg disabled:opacity-40 hover:bg-jinden-blue/90 transition-colors"
+              >
+                {loading ? '解析中...' : text.length >= 100 ? 'AI解析' : '追加'}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div>
+            <div className="flex items-center justify-between mb-2">
+              <p className="text-[13px] font-semibold text-ink">✨ AI抽出結果 — 追加するタスクを選択</p>
+              <button onClick={() => setParsed(null)} className="text-[12px] text-gray-400 hover:text-gray-600">キャンセル</button>
+            </div>
+            <div className="space-y-1.5 max-h-48 overflow-y-auto mb-3">
+              {parsed.map((p, i) => (
+                <label key={i} className="flex items-start gap-2 cursor-pointer p-2 rounded-lg hover:bg-gray-50">
+                  <input
+                    type="checkbox"
+                    checked={p.checked}
+                    onChange={() => toggleParsed(i)}
+                    className="mt-0.5 accent-jinden-blue"
+                  />
+                  <div className="flex-1">
+                    <p className="text-[13px] text-ink">{p.title}</p>
+                    {p.due && <p className="text-[11px] text-gray-400">📅 {p.due}</p>}
+                  </div>
+                </label>
+              ))}
             </div>
             <button
-              onClick={handleSubmit}
-              disabled={loading || !text.trim()}
-              className="text-[12px] px-3 py-1 bg-jinden-blue text-white rounded-lg disabled:opacity-40 hover:bg-jinden-blue/90 transition-colors"
+              onClick={bulkInsert}
+              className="w-full py-2.5 text-[13px] font-semibold text-white bg-jinden-blue rounded-xl hover:bg-jinden-blue/90 transition-colors"
             >
-              {loading ? '解析中...' : text.length >= 100 ? 'AI解析' : '追加'}
+              {parsed.filter(p => p.checked).length}件を追加
             </button>
           </div>
-        </div>
-      ) : (
-        <div>
-          <div className="flex items-center justify-between mb-2">
-            <p className="text-[13px] font-semibold text-ink">✨ AI抽出結果 — 追加するタスクを選択</p>
-            <button onClick={() => setParsed(null)} className="text-[12px] text-gray-400 hover:text-gray-600">キャンセル</button>
-          </div>
-          <div className="space-y-1.5 max-h-48 overflow-y-auto mb-3">
-            {parsed.map((p, i) => (
-              <label key={i} className="flex items-start gap-2 cursor-pointer p-2 rounded-lg hover:bg-gray-50">
-                <input
-                  type="checkbox"
-                  checked={p.checked}
-                  onChange={() => toggleParsed(i)}
-                  className="mt-0.5 accent-jinden-blue"
+        )}
+      </div>
+
+      {/* Mobile bottom sheet */}
+      {mobileOpen && (
+        <div className="md:hidden fixed inset-0 z-50">
+          <div className="absolute inset-0 bg-black/30" onClick={() => { setParsed(null); setText(''); onMobileClose?.(); }} />
+          <div className="absolute bottom-0 left-0 right-0 bg-white rounded-t-2xl p-4 animate-slideUpSheet" style={{ paddingBottom: 'max(2rem, env(safe-area-inset-bottom))' }}>
+            <div className="w-10 h-1 bg-gray-300 rounded-full mx-auto mb-4" />
+
+            {!parsed ? (
+              <>
+                <textarea
+                  autoFocus
+                  value={text}
+                  onChange={e => setText(e.target.value)}
+                  onPaste={handlePaste}
+                  onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey && text.trim() && text.length < 100) { e.preventDefault(); handleSubmit(); } }}
+                  placeholder="タスクを追加..."
+                  className="w-full text-[16px] py-3 px-4 bg-gray-50 rounded-xl border-0 focus:ring-2 focus:ring-jinden-blue/30 resize-none"
+                  rows={3}
+                  disabled={loading}
                 />
-                <div className="flex-1">
-                  <p className="text-[13px] text-ink">{p.title}</p>
-                  {p.due && <p className="text-[11px] text-gray-400">📅 {p.due}</p>}
+                {text.length >= 100 && (
+                  <span className="inline-block mt-2 text-[12px] text-jinden-blue bg-mist px-2 py-0.5 rounded-full">AI解析モード</span>
+                )}
+                <div className="flex items-center gap-3 mt-3">
+                  <label className="cursor-pointer min-w-[44px] min-h-[44px] p-2.5 rounded-lg bg-gray-100 text-gray-600 flex items-center justify-center text-lg">
+                    📷
+                    <input
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={e => { const f = e.target.files?.[0]; if (f) analyzeImage(f); }}
+                    />
+                  </label>
                 </div>
-              </label>
-            ))}
+                <div className="flex gap-3 mt-4">
+                  <button
+                    onClick={() => { setParsed(null); setText(''); onMobileClose?.(); }}
+                    className="flex-1 py-3 bg-gray-100 rounded-xl text-sm font-medium text-gray-600 min-h-[44px]"
+                  >
+                    キャンセル
+                  </button>
+                  <button
+                    onClick={handleSubmit}
+                    disabled={loading || !text.trim()}
+                    className="flex-1 py-3 bg-jinden-blue text-white rounded-xl text-sm font-semibold disabled:opacity-40 min-h-[44px]"
+                  >
+                    {loading ? '解析中...' : text.length >= 100 ? 'AI解析 ⬆️' : '追加 ⬆️'}
+                  </button>
+                </div>
+              </>
+            ) : (
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-[13px] font-semibold text-ink">✨ AI抽出結果</p>
+                  <button onClick={() => setParsed(null)} className="text-[12px] text-gray-400">キャンセル</button>
+                </div>
+                <div className="space-y-1.5 max-h-52 overflow-y-auto mb-3">
+                  {parsed.map((p, i) => (
+                    <label key={i} className="flex items-start gap-2 cursor-pointer p-2 rounded-lg hover:bg-gray-50">
+                      <input type="checkbox" checked={p.checked} onChange={() => toggleParsed(i)} className="mt-0.5 accent-jinden-blue" />
+                      <div className="flex-1">
+                        <p className="text-[14px] text-ink">{p.title}</p>
+                        {p.due && <p className="text-[11px] text-gray-400">📅 {p.due}</p>}
+                      </div>
+                    </label>
+                  ))}
+                </div>
+                <button
+                  onClick={bulkInsert}
+                  className="w-full py-3 text-[14px] font-semibold text-white bg-jinden-blue rounded-xl min-h-[44px]"
+                >
+                  {parsed.filter(p => p.checked).length}件を追加
+                </button>
+              </div>
+            )}
           </div>
-          <button
-            onClick={bulkInsert}
-            className="w-full py-2.5 text-[13px] font-semibold text-white bg-jinden-blue rounded-xl hover:bg-jinden-blue/90 transition-colors"
-          >
-            {parsed.filter(p => p.checked).length}件を追加
-          </button>
         </div>
       )}
-    </div>
+    </>
   );
 }

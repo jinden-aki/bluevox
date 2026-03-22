@@ -212,6 +212,13 @@ body {
 .task-slide-up { animation: slideUp 0.3s ease; }
 .task-completing { animation: slideOut 0.4s ease forwards; }
 
+/* ─── Mobile UX helpers ─── */
+.scrollbar-hide::-webkit-scrollbar { display: none; }
+.scrollbar-hide { -ms-overflow-style: none; scrollbar-width: none; }
+
+/* Bottom sheet slide-up (alias for sheet-up) */
+.animate-slideUpSheet { animation: sheetUp 0.3s ease-out forwards; }
+
 /* Print styles */
 @media print {
   .sidebar, .topbar-main, .no-print { display: none !important; }

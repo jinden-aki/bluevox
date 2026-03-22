@@ -112,7 +112,8 @@ export default function WeeklyReviewModal({ items, userId, onClose }: WeeklyRevi
 
   return (
     <div className="fixed inset-0 z-50 flex items-end md:items-center justify-center bg-black/40">
-      <div className="w-full md:max-w-lg bg-white rounded-t-2xl md:rounded-2xl p-5 max-h-[90vh] overflow-y-auto">
+      <div className="w-full md:max-w-lg bg-white rounded-t-2xl md:rounded-2xl flex flex-col h-[95vh] md:h-auto md:max-h-[90vh]">
+        <div className="flex-1 overflow-y-auto p-5">
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-[15px] font-semibold text-ink">📝 先週の振り返り（{weekLabel}）</h2>
           <button onClick={onClose} className="text-gray-400 hover:text-ink p-1">
@@ -146,8 +147,8 @@ export default function WeeklyReviewModal({ items, userId, onClose }: WeeklyRevi
               value={learned}
               onChange={e => setLearned(e.target.value)}
               placeholder="今週の気づき..."
-              className="mt-1 w-full text-[15px] border border-gray-200 rounded-lg px-3 py-2 resize-none focus:outline-none focus:border-jinden-blue"
-              rows={3}
+              className="mt-1 w-full text-[16px] border border-gray-200 rounded-lg px-3 py-2 resize-none focus:outline-none focus:border-jinden-blue"
+              rows={4}
             />
           </div>
           <div>
@@ -156,8 +157,8 @@ export default function WeeklyReviewModal({ items, userId, onClose }: WeeklyRevi
               value={nextHypothesis}
               onChange={e => setNextHypothesis(e.target.value)}
               placeholder="来週やること・試すこと..."
-              className="mt-1 w-full text-[15px] border border-gray-200 rounded-lg px-3 py-2 resize-none focus:outline-none focus:border-jinden-blue"
-              rows={3}
+              className="mt-1 w-full text-[16px] border border-gray-200 rounded-lg px-3 py-2 resize-none focus:outline-none focus:border-jinden-blue"
+              rows={4}
             />
           </div>
 
@@ -177,19 +178,21 @@ export default function WeeklyReviewModal({ items, userId, onClose }: WeeklyRevi
           )}
         </div>
 
-        <div className="flex gap-3 mt-5">
-          <button onClick={onClose} className="flex-1 py-2.5 text-[13px] text-gray-600 border border-gray-200 rounded-xl hover:bg-gray-50 transition-colors">
-            キャンセル
-          </button>
-          <button
-            onClick={handleSave}
-            disabled={saving}
-            className="flex-1 py-2.5 text-[13px] text-white bg-jinden-blue rounded-xl disabled:opacity-40 hover:bg-jinden-blue/90 transition-colors"
-          >
-            {saving ? '保存中...' : '保存する'}
-          </button>
         </div>
+      {/* Sticky footer */}
+      <div className="flex gap-3 px-5 py-4 border-t border-gray-100 bg-white" style={{ paddingBottom: 'max(1rem, env(safe-area-inset-bottom))' }}>
+        <button onClick={onClose} className="flex-1 py-3 text-[13px] text-gray-600 border border-gray-200 rounded-xl hover:bg-gray-50 transition-colors min-h-[44px]">
+          キャンセル
+        </button>
+        <button
+          onClick={handleSave}
+          disabled={saving}
+          className="flex-1 py-3 text-[13px] text-white bg-jinden-blue rounded-xl disabled:opacity-40 hover:bg-jinden-blue/90 transition-colors min-h-[44px]"
+        >
+          {saving ? '保存中...' : '保存する'}
+        </button>
       </div>
+    </div>
     </div>
   );
 }

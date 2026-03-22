@@ -20,7 +20,7 @@ const TABS: { id: TaskTab; label: string; icon: string }[] = [
 
 export default function TaskTabs({ activeTab, onChange, ballCount = 0, staleCount = 0 }: TaskTabsProps) {
   return (
-    <div className="flex gap-1 px-4 py-2 bg-white border-b border-gray-100 overflow-x-auto scrollbar-none">
+    <div className="hidden md:flex gap-1 px-4 py-2 bg-white border-b border-gray-100 overflow-x-auto scrollbar-none">
       {TABS.map(tab => {
         const count =
           tab.id === 'ball' ? ballCount :

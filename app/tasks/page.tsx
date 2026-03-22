@@ -54,6 +54,8 @@ export default function TasksPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [userId, setUserId] = useState<string | null>(null);
 
+  const [showMobileQuickAdd, setShowMobileQuickAdd] = useState(false);
+
   // V8 Modal states
   const [selectedTask, setSelectedTask] = useState<TaskItem | null>(null);
   const [selectedItem, setSelectedItem] = useState<Item | null>(null); // for clip/idea
@@ -343,8 +345,21 @@ export default function TasksPage() {
         <Sidebar />
         <main className="ml-0 md:ml-60 flex-1 flex flex-col min-h-screen">
 
-          {/* ===== TOP TAB BAR ===== */}
-          <div className="sticky top-0 z-40 bg-white border-b border-gray-100">
+          {/* Mobile fixed top header */}
+          <div className="md:hidden fixed top-0 left-0 right-0 h-12 bg-white/95 backdrop-blur-sm border-b border-gray-200 flex items-center justify-between px-4 z-40">
+            <span className="text-sm font-semibold text-ink">BLUEVOX</span>
+            <button
+              onClick={() => setShowDump(true)}
+              className="p-2 min-h-[44px] min-w-[44px] flex items-center justify-center text-gray-600"
+            >
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+              </svg>
+            </button>
+          </div>
+
+          {/* ===== TOP TAB BAR (desktop only) ===== */}
+          <div className="hidden md:block sticky top-0 z-40 bg-white border-b border-gray-100">
             <div className="flex items-center gap-1 px-4 pt-3 pb-0">
               {([
                 { key: 'task' as TopTab, label: '🔥 やること', count: taskCount },
@@ -369,30 +384,41 @@ export default function TasksPage() {
 
           {/* ===== TASK TAB ===== */}
           {topTab === 'task' && (
-            <div className="flex flex-col flex-1 min-h-0">
-              {/* Task header */}
-              <TaskHeader onOpenDump={() => setShowDump(true)} onOpenReview={() => setShowReview(true)} />
+            <div className="flex flex-col flex-1 min-h-0 pt-12 md:pt-0">
+              {/* Task header (desktop only) */}
+              <div className="hidden md:block">
+                <TaskHeader onOpenDump={() => setShowDump(true)} onOpenReview={() => setShowReview(true)} />
+              </div>
 
               {/* QuickCapture */}
               {userId && (
-                <QuickCapture userId={userId} onAdded={handleAdded} />
-              )}
-
-              {/* Stale alert */}
-              {staleTasks.length > 0 && (
-                <StaleAlert count={staleTasks.length} onClick={() => setTaskTab('stale')} />
-              )}
-
-              {/* Focus Cards */}
-              {todayFocusTasks.length > 0 && taskTab !== 'dashboard' && (
-                <FocusCards
-                  tasks={todayFocusTasks}
-                  onComplete={handleComplete}
-                  onSelect={t => setSelectedTask(t)}
+                <QuickCapture
+                  userId={userId}
+                  onAdded={handleAdded}
+                  mobileOpen={showMobileQuickAdd}
+                  onMobileClose={() => setShowMobileQuickAdd(false)}
                 />
               )}
 
-              {/* Task sub-tabs */}
+              {/* Stale alert (desktop only) */}
+              {staleTasks.length > 0 && (
+                <div className="hidden md:block">
+                  <StaleAlert count={staleTasks.length} onClick={() => setTaskTab('stale')} />
+                </div>
+              )}
+
+              {/* Focus Cards (desktop only) */}
+              {todayFocusTasks.length > 0 && taskTab !== 'dashboard' && (
+                <div className="hidden md:block">
+                  <FocusCards
+                    tasks={todayFocusTasks}
+                    onComplete={handleComplete}
+                    onSelect={t => setSelectedTask(t)}
+                  />
+                </div>
+              )}
+
+              {/* Task sub-tabs (desktop only — mobile uses bottom nav) */}
               <TaskTabs
                 activeTab={taskTab}
                 onChange={setTaskTab}
@@ -410,7 +436,7 @@ export default function TasksPage() {
               )}
 
               {/* Tab Content */}
-              <div className="flex-1 overflow-y-auto">
+              <div className="flex-1 overflow-y-auto pb-20 md:pb-0">
                 {taskTab === 'dashboard' && (
                   <MorningDashboard
                     tasks={activeTasks}
@@ -419,6 +445,7 @@ export default function TasksPage() {
                     onShowList={() => setTaskTab('list')}
                     onAddTask={() => setShowDump(true)}
                     onSelectTask={t => setSelectedTask(t)}
+                    onComplete={handleComplete}
                   />
                 )}
 
@@ -428,6 +455,7 @@ export default function TasksPage() {
                     onComplete={handleComplete}
                     onSelect={t => setSelectedTask(t)}
                     onPassBall={t => setPassBallTask(t)}
+                    onDelete={handleDelete}
                     emptyMessage="タスクがありません。QuickCaptureから追加しましょう"
                   />
                 )}
@@ -574,6 +602,23 @@ export default function TasksPage() {
             </div>
           )}
 
+          {/* Mobile bottom tab bar */}
+          <div
+            className="md:hidden fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur-sm border-t border-gray-200 flex items-center justify-around py-2 z-40"
+            style={{ paddingBottom: 'max(0.5rem, env(safe-area-inset-bottom))' }}
+          >
+            <MobileTabButton icon="🌅" label="ホーム" active={taskTab === 'dashboard' && topTab === 'task'} onClick={() => { setTopTab('task'); setTaskTab('dashboard'); }} />
+            <MobileTabButton icon="📋" label="タスク" active={taskTab === 'list' && topTab === 'task'} onClick={() => { setTopTab('task'); setTaskTab('list'); }} />
+            <button
+              onClick={() => setShowMobileQuickAdd(true)}
+              className="w-12 h-12 bg-jinden-blue text-white rounded-full flex items-center justify-center text-xl shadow-lg -mt-4"
+            >
+              ➕
+            </button>
+            <MobileTabButton icon="🏀" label="ボール" active={taskTab === 'ball' && topTab === 'task'} onClick={() => { setTopTab('task'); setTaskTab('ball'); }} />
+            <MobileTabButton icon="🗂️" label="カンバン" active={taskTab === 'kanban' && topTab === 'task'} onClick={() => { setTopTab('task'); setTaskTab('kanban'); }} />
+          </div>
+
           {/* Shortcuts hint */}
           <div className="hidden md:flex items-center justify-end px-4 py-2 border-t border-gray-100 bg-white">
             <button
@@ -686,5 +731,29 @@ export default function TasksPage() {
 
       <ToastContainer />
     </AuthGuard>
+  );
+}
+
+function MobileTabButton({
+  icon,
+  label,
+  active,
+  onClick,
+}: {
+  icon: string;
+  label: string;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`flex flex-col items-center gap-0.5 py-1 px-3 min-w-[56px] min-h-[44px] justify-center transition-colors ${
+        active ? 'text-jinden-blue' : 'text-gray-400'
+      }`}
+    >
+      <span className="text-lg">{icon}</span>
+      <span className="text-[10px]">{label}</span>
+    </button>
   );
 }
