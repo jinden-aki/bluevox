@@ -1,3 +1,43 @@
+// --- セグメント型定義 ---
+export type TalentSegment = 'ca' | 'top_company' | 'mid_company' | 'student';
+
+export const SEGMENT_CONFIG: Record<TalentSegment, {
+  label: string;
+  labelShort: string;
+  color: string;
+  bgColor: string;
+  icon: string;
+}> = {
+  ca: {
+    label: 'CA（現役/元CyberAgent）',
+    labelShort: 'CA',
+    color: '#1565C0',
+    bgColor: '#E3F2FD',
+    icon: '🟦',
+  },
+  top_company: {
+    label: 'TOP層（トップ企業出身/所属）',
+    labelShort: 'TOP層',
+    color: '#2E7D32',
+    bgColor: '#E8F5E9',
+    icon: '🟩',
+  },
+  mid_company: {
+    label: 'ミドル層（ミドル企業出身/所属）',
+    labelShort: 'ミドル層',
+    color: '#E65100',
+    bgColor: '#FFF3E0',
+    icon: '🟧',
+  },
+  student: {
+    label: '学生',
+    labelShort: '学生',
+    color: '#6A1B9A',
+    bgColor: '#F3E5F5',
+    icon: '🟪',
+  },
+};
+
 export interface ProfileData {
   profile_photo?: string; // base64 data URI
   age?: string;
@@ -31,6 +71,7 @@ export interface Session {
   jinden_direct_eval: JindenEval | null;
   profile_data: ProfileData | null;
   status: string;
+  segment: TalentSegment;
   analysis: AnalysisResult | null;
   created_at: string;
   updated_at: string;
@@ -79,6 +120,7 @@ export interface Talent {
   name: string;
   company: string;
   status: 'new' | 'analyzing' | 'review' | 'ready' | 'd-ng' | 'd-gem' | 'deleted';
+  segment?: TalentSegment;
   analysis: AnalysisResult | null;
   created_at: string;
   updated_at: string;

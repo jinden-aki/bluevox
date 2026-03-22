@@ -6,16 +6,21 @@ import AuthGuard from '@/components/layout/AuthGuard';
 import Sidebar from '@/components/layout/Sidebar';
 import Topbar from '@/components/layout/Topbar';
 import ToastContainer from '@/components/ui/Toast';
+import { SEGMENT_CONFIG, type TalentSegment } from '@/lib/types';
 
 interface KPIData {
   total: number;
   ready: number;
   review: number;
   dGem: number;
+  segments: Record<TalentSegment, number>;
 }
 
 export default function DashboardPage() {
-  const [kpi, setKpi] = useState<KPIData>({ total: 0, ready: 0, review: 0, dGem: 0 });
+  const [kpi, setKpi] = useState<KPIData>({
+    total: 0, ready: 0, review: 0, dGem: 0,
+    segments: { ca: 0, top_company: 0, mid_company: 0, student: 0 },
+  });
 
   useEffect(() => {
     loadKPI();
@@ -24,15 +29,22 @@ export default function DashboardPage() {
   const loadKPI = async () => {
     const { data: talents } = await supabase
       .from('talents')
-      .select('status')
+      .select('status, segment')
       .is('deleted_at', null);
 
     if (talents) {
+      const segCounts: Record<TalentSegment, number> = { ca: 0, top_company: 0, mid_company: 0, student: 0 };
+      talents.forEach(t => {
+        const seg = (t.segment || 'ca') as TalentSegment;
+        segCounts[seg] = (segCounts[seg] || 0) + 1;
+      });
+
       setKpi({
         total: talents.length,
         ready: talents.filter(t => t.status === 'ready').length,
         review: talents.filter(t => t.status === 'review').length,
         dGem: talents.filter(t => t.status === 'd-gem').length,
+        segments: segCounts,
       });
     }
   };
@@ -44,11 +56,38 @@ export default function DashboardPage() {
         <main className="ml-0 md:ml-60 flex-1 min-h-screen">
           <Topbar />
           <div className="p-4 md:p-7 max-w-[1200px]">
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4 mb-6">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4 mb-4">
               <KPICard label="TOTAL TALENTS" value={kpi.total} color="blue" sub="登録人材数" />
               <KPICard label="READY" value={kpi.ready} color="sky" sub="推薦可能" />
               <KPICard label="REVIEW" value={kpi.review} color="green" sub="レビュー待ち" />
               <KPICard label="D-GEMS" value={kpi.dGem} color="torch" sub="D-原石" />
+            </div>
+
+            {/* Segment breakdown */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 md:gap-4 mb-6">
+              {(Object.entries(SEGMENT_CONFIG) as [TalentSegment, typeof SEGMENT_CONFIG[TalentSegment]][]).map(
+                ([key, cfg]) => (
+                  <div
+                    key={key}
+                    className="bg-white border border-gray-300 rounded-[10px] p-4 relative overflow-hidden"
+                  >
+                    <div
+                      className="absolute top-0 left-0 w-1 h-full"
+                      style={{ backgroundColor: cfg.color }}
+                    />
+                    <div className="flex items-center gap-2 mb-1.5">
+                      <span className="text-base">{cfg.icon}</span>
+                      <span className="text-[10px] font-bold tracking-[0.1em] text-gray-500 uppercase">
+                        {cfg.labelShort}
+                      </span>
+                    </div>
+                    <div className="font-brand text-3xl font-normal text-midnight leading-none">
+                      {kpi.segments[key]}
+                    </div>
+                    <div className="text-[10px] text-gray-500 mt-1">{cfg.label}</div>
+                  </div>
+                ),
+              )}
             </div>
 
             <div className="bg-white border border-gray-300 rounded-[10px] shadow-sm p-6">

@@ -5,9 +5,20 @@ import { useRouter } from 'next/navigation';
 import { supabase } from '@/lib/supabase';
 import { getUnreadFeedbackCounts } from '@/lib/share';
 import type { Talent } from '@/lib/types';
+import { SEGMENT_CONFIG, type TalentSegment } from '@/lib/types';
 import Badge, { LevelBadge } from '@/components/ui/Badge';
 
 type FilterKey = 'all' | 'ready' | 'review' | 'd-gem';
+type SegmentFilterKey = 'all' | TalentSegment;
+
+const segmentFilterConfig: { key: SegmentFilterKey; label: string; icon?: string }[] = [
+  { key: 'all', label: '全セグメント' },
+  ...Object.entries(SEGMENT_CONFIG).map(([k, v]) => ({
+    key: k as SegmentFilterKey,
+    label: v.labelShort,
+    icon: v.icon,
+  })),
+];
 
 const filterConfig: { key: FilterKey; label: string }[] = [
   { key: 'all', label: '全て' },
@@ -19,6 +30,7 @@ const filterConfig: { key: FilterKey; label: string }[] = [
 export default function TalentTable() {
   const [talents, setTalents] = useState<Talent[]>([]);
   const [filter, setFilter] = useState<FilterKey>('all');
+  const [segmentFilter, setSegmentFilter] = useState<SegmentFilterKey>('all');
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [fbCounts, setFbCounts] = useState<Record<string, number>>({});
@@ -50,6 +62,10 @@ export default function TalentTable() {
   };
 
   const filtered = talents.filter(t => {
+    if (segmentFilter !== 'all') {
+      const tSeg = (t.segment || 'ca') as TalentSegment;
+      if (tSeg !== segmentFilter) return false;
+    }
     if (filter !== 'all' && t.status !== filter) return false;
     if (search) {
       const q = search.toLowerCase();
@@ -89,7 +105,41 @@ export default function TalentTable() {
   return (
     <div>
       {/* Filters and search */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 mb-4">
+      <div className="flex flex-col gap-3 mb-4">
+        {/* Segment filter tabs */}
+        <div className="flex gap-1.5 overflow-x-auto pb-2 border-b border-gray-200">
+          {segmentFilterConfig.map(sf => {
+            const count = sf.key === 'all'
+              ? talents.length
+              : talents.filter(t => (t.segment || 'ca') === sf.key).length;
+            const cfg = sf.key !== 'all' ? SEGMENT_CONFIG[sf.key as TalentSegment] : null;
+            return (
+              <button
+                key={sf.key}
+                onClick={() => setSegmentFilter(sf.key)}
+                className={`inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg text-xs font-medium transition whitespace-nowrap min-h-[36px] ${
+                  segmentFilter === sf.key
+                    ? 'text-white shadow-sm'
+                    : 'bg-gray-50 text-gray-600 hover:bg-gray-100'
+                }`}
+                style={
+                  segmentFilter === sf.key && cfg
+                    ? { backgroundColor: cfg.color }
+                    : segmentFilter === sf.key
+                    ? { backgroundColor: '#1565C0' }
+                    : undefined
+                }
+              >
+                {sf.icon && <span className="text-sm">{sf.icon}</span>}
+                {sf.label}
+                <span className={`ml-1 ${segmentFilter === sf.key ? 'opacity-80' : 'opacity-50'}`}>
+                  {count}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="flex gap-1.5 overflow-x-auto">
           {filterConfig.map(f => (
             <button
@@ -122,6 +172,7 @@ export default function TalentTable() {
             className="pl-9 pr-3 py-2 border border-gray-300 rounded-lg text-xs focus:outline-none focus:border-jinden-blue focus:ring-2 focus:ring-jinden-blue/10 w-full sm:w-56 transition min-h-[40px]"
           />
         </div>
+        </div>
       </div>
 
       {/* Desktop Table */}
@@ -131,6 +182,7 @@ export default function TalentTable() {
             <tr className="border-b border-gray-200 bg-gray-50/70">
               <th className="text-left px-4 py-3 text-[10px] font-bold tracking-[0.15em] text-gray-500 uppercase">名前</th>
               <th className="text-left px-4 py-3 text-[10px] font-bold tracking-[0.15em] text-gray-500 uppercase">企業</th>
+              <th className="text-left px-4 py-3 text-[10px] font-bold tracking-[0.15em] text-gray-500 uppercase">セグメント</th>
               <th className="text-left px-4 py-3 text-[10px] font-bold tracking-[0.15em] text-gray-500 uppercase">タイプ</th>
               <th className="text-center px-4 py-3 text-[10px] font-bold tracking-[0.15em] text-gray-500 uppercase">Lv</th>
               <th className="text-center px-4 py-3 text-[10px] font-bold tracking-[0.15em] text-gray-500 uppercase">ステータス</th>
@@ -142,7 +194,7 @@ export default function TalentTable() {
           <tbody>
             {filtered.length === 0 ? (
               <tr>
-                <td colSpan={8} className="text-center py-12 text-sm text-gray-500">
+                <td colSpan={9} className="text-center py-12 text-sm text-gray-500">
                   {search ? '検索結果が見つかりません' : '人材データがありません'}
                 </td>
               </tr>
@@ -158,6 +210,20 @@ export default function TalentTable() {
                   </td>
                   <td className="px-4 py-3">
                     <span className="text-xs text-gray-600">{t.company || '-'}</span>
+                  </td>
+                  <td className="px-4 py-3">
+                    {(() => {
+                      const seg = (t.segment || 'ca') as TalentSegment;
+                      const cfg = SEGMENT_CONFIG[seg];
+                      return (
+                        <span
+                          className="inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full"
+                          style={{ backgroundColor: cfg.bgColor, color: cfg.color }}
+                        >
+                          {cfg.icon} {cfg.labelShort}
+                        </span>
+                      );
+                    })()}
                   </td>
                   <td className="px-4 py-3">
                     <span className="text-xs text-gray-700">{getType(t)}</span>
@@ -222,6 +288,18 @@ export default function TalentTable() {
                 <div className="min-w-0">
                   <div className="flex items-center gap-2">
                     <span className="text-[14px] font-semibold text-gray-900 truncate">{t.name}</span>
+                    {(() => {
+                      const seg = (t.segment || 'ca') as TalentSegment;
+                      const cfg = SEGMENT_CONFIG[seg];
+                      return (
+                        <span
+                          className="text-[9px] font-bold px-1.5 py-0.5 rounded"
+                          style={{ backgroundColor: cfg.bgColor, color: cfg.color }}
+                        >
+                          {cfg.labelShort}
+                        </span>
+                      );
+                    })()}
                     {typeof getLv(t) === 'number' && <LevelBadge level={getLv(t) as number} />}
                   </div>
                   {t.company && (

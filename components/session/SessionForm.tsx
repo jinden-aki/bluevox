@@ -9,6 +9,7 @@ import { buildUserMsg } from '@/lib/build-user-msg';
 import { extractTwinData } from '@/lib/twin-extract';
 import { showToast } from '@/components/ui/Toast';
 import type { JindenEval, ProfileData } from '@/lib/types';
+import { SEGMENT_CONFIG, type TalentSegment } from '@/lib/types';
 import AnalysisProgress from './AnalysisProgress';
 
 // ---------------------------------------------------------------------------
@@ -130,6 +131,7 @@ interface FormState {
   jindenMemoCommunity: string;
   jindenMemoPersonality: string;
   jindenMemoFit: string;
+  segment: TalentSegment;
 }
 
 function getInitialState(): FormState {
@@ -161,6 +163,7 @@ function getInitialState(): FormState {
     jindenMemoCommunity: '',
     jindenMemoPersonality: '',
     jindenMemoFit: '',
+    segment: 'ca',
   };
 }
 
@@ -293,6 +296,7 @@ export default function SessionForm() {
       jinden_direct_eval: jindenEval,
       profile_data: profileData,
       status: 'new',
+      segment: form.segment,
     });
 
     if (error) {
@@ -360,6 +364,7 @@ export default function SessionForm() {
       jinden_direct_eval: jindenEval,
       profile_data: profileData,
       status: 'analyzing',
+      segment: form.segment,
     });
 
     if (sessionError) {
@@ -437,6 +442,7 @@ export default function SessionForm() {
         name: form.name.trim(),
         company: form.company.trim() || null,
         status: talentStatus,
+        segment: form.segment,
         analysis,
       });
 
@@ -500,6 +506,44 @@ export default function SessionForm() {
             onChange={set('name')}
             placeholder="例：鈴木太郎"
           />
+        </div>
+
+        {/* Segment Select — 4属性 */}
+        <div>
+          <label className="block text-xs font-semibold text-gray-700 mb-2">
+            人材セグメント *
+          </label>
+          <div className="grid grid-cols-2 gap-2">
+            {(Object.entries(SEGMENT_CONFIG) as [TalentSegment, typeof SEGMENT_CONFIG[TalentSegment]][]).map(
+              ([key, cfg]) => (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => setForm(prev => ({ ...prev, segment: key }))}
+                  className={`flex items-center gap-2 px-3.5 py-3 rounded-lg border-2 text-left transition ${
+                    form.segment === key
+                      ? 'border-current shadow-sm'
+                      : 'border-gray-200 hover:border-gray-300'
+                  }`}
+                  style={{
+                    borderColor: form.segment === key ? cfg.color : undefined,
+                    backgroundColor: form.segment === key ? cfg.bgColor : undefined,
+                  }}
+                >
+                  <span className="text-lg">{cfg.icon}</span>
+                  <div>
+                    <div
+                      className="text-[12px] font-semibold"
+                      style={{ color: form.segment === key ? cfg.color : '#374151' }}
+                    >
+                      {cfg.labelShort}
+                    </div>
+                    <div className="text-[10px] text-gray-500">{cfg.label}</div>
+                  </div>
+                </button>
+              ),
+            )}
+          </div>
         </div>
 
         {/* Date & Type */}
