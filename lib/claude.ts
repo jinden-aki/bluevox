@@ -1,6 +1,8 @@
 const MODEL_MAP = {
   analysis: 'claude-sonnet-4-20250514',
   jobMatching: 'claude-sonnet-4-20250514',
+  companyAnalysis: 'claude-sonnet-4-20250514',
+  webResearch: 'claude-sonnet-4-20250514',
   applyMessage: 'claude-haiku-4-5-20251001',
   thought: 'claude-haiku-4-5-20251001',
   writer: 'claude-haiku-4-5-20251001',
@@ -21,6 +23,7 @@ interface ClaudeRequestOptions {
   tools?: any[];
   maxTokens?: number;
   temperature?: number;
+  extraBetas?: string[];
 }
 
 const TOKEN_DEFAULTS: Partial<Record<TaskType, number>> = {
@@ -28,7 +31,7 @@ const TOKEN_DEFAULTS: Partial<Record<TaskType, number>> = {
 };
 
 export async function callClaude(options: ClaudeRequestOptions) {
-  const { task, systemPrompt, userContent, apiKey, tools, maxTokens, temperature } = options;
+  const { task, systemPrompt, userContent, apiKey, tools, maxTokens, temperature, extraBetas } = options;
   const resolvedMaxTokens = maxTokens ?? TOKEN_DEFAULTS[task] ?? 8192;
   const model = MODEL_MAP[task];
 
@@ -49,6 +52,8 @@ export async function callClaude(options: ClaudeRequestOptions) {
     body.tools = tools;
   }
 
+  const betas = ['prompt-caching-2024-07-31', ...(extraBetas || [])].join(',');
+
   const response = await fetch('https://api.anthropic.com/v1/messages', {
     method: 'POST',
     headers: {
@@ -56,7 +61,7 @@ export async function callClaude(options: ClaudeRequestOptions) {
       'x-api-key': apiKey,
       'anthropic-version': '2023-06-01',
       'anthropic-dangerous-direct-browser-access': 'true',
-      'anthropic-beta': 'prompt-caching-2024-07-31'
+      'anthropic-beta': betas,
     },
     body: JSON.stringify(body)
   });

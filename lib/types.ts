@@ -311,6 +311,141 @@ export interface AnalysisResult {
   };
 }
 
+// ============================================================
+// Company Diagnosis Types
+// ============================================================
+
+export interface KeyPerson {
+  id: string;
+  name: string;
+  role: 'ceo' | 'executive' | 'hr' | 'manager' | 'other';
+  role_label?: string;
+  is_decision_maker: boolean;
+  is_interviewed: boolean;
+  pcm1: string;
+  pcm2: string;
+  pcm3: string;
+  memo: string;
+}
+
+export const KEY_PERSON_ROLES = [
+  { value: 'ceo', label: '代表/CEO' },
+  { value: 'executive', label: '経営幹部（CTO/COO等）' },
+  { value: 'hr', label: '人事/HR責任者' },
+  { value: 'manager', label: '事業部長/マネージャー' },
+  { value: 'other', label: 'その他' },
+] as const;
+
+export interface Company {
+  id: string;
+  user_id: string;
+  company_name: string;
+  website_url: string | null;
+  meeting_memo: string | null;
+  meeting_date: string | null;
+  jinden_memo_issue: string | null;
+  jinden_memo_fit_type: string | null;
+  jinden_memo_caution: string | null;
+  key_persons: KeyPerson[];
+  analysis: CompanyAnalysis | null;
+  web_research: WebResearch | null;
+  additional_files: AdditionalFile[];
+  additional_memos: AdditionalMemo[];
+  status: 'new' | 'analyzing' | 'review' | 'complete';
+  analysis_version: number;
+  created_at: string;
+  updated_at: string;
+  deleted_at: string | null;
+}
+
+export interface AdditionalFile {
+  name: string;
+  type: string;
+  content_summary: string;
+  added_at: string;
+}
+
+export interface AdditionalMemo {
+  memo: string;
+  added_at: string;
+}
+
+export interface WebResearch {
+  company_overview: string;
+  industry: string;
+  founding_year: string | null;
+  employee_count: string | null;
+  funding_stage: string | null;
+  funding_amount: string | null;
+  key_products: string[];
+  recent_news: string[];
+  tech_stack: string[];
+  culture_signals: string[];
+  fetched_at: string;
+}
+
+export interface CompanyAnalysis {
+  core_sentence: string;
+  jinden_comment: string;
+  key_person_analysis: {
+    person_name: string;
+    role: string;
+    pcm_analysis: string;
+    communication_style: string;
+    compatible_types: string[];
+    incompatible_types: string[];
+    decision_influence: string;
+  }[];
+  relationship_map: string;
+  org_phase: {
+    phase: 'seed' | 'early' | 'growth' | 'later';
+    phase_detail: string;
+    employee_count: string;
+    wall_analysis: string;
+  };
+  org_health_radar: {
+    axis: string;
+    score: number;
+    evidence: string;
+  }[];
+  positions: {
+    title: string;
+    department: string;
+    verb_spec: string;
+    urgency: 'high' | 'mid' | 'low';
+    why_now: string;
+    budget_range: string;
+    hours_per_week: string;
+    remote: string;
+    required_verbs: string[];
+    ng_verbs: string[];
+  }[];
+  surface_issues: string[];
+  deep_issues: {
+    surface: string;
+    reframe: string;
+    theory_lens: string;
+  }[];
+  ai_proposals: {
+    issue: string;
+    proposal: string;
+    impact: string;
+  }[];
+  ideal_profile: {
+    verb_description: string;
+    must_have_conditions: string[];
+    must_avoid_conditions: string[];
+    pcm_compatibility: string;
+  };
+  jinden_assessment: {
+    difficulty: 'easy' | 'normal' | 'hard' | 'very_hard';
+    difficulty_reason: string;
+    risk_factors: string[];
+    opportunity: string;
+    final_note: string;
+  };
+}
+
 export interface ThoughtItem {
   id: string;
   user_id: string;
