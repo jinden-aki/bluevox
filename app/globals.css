@@ -201,6 +201,31 @@ body {
   .axis-label { width: 60px; font-size: 11px; }
 }
 
+/* ── Task Page Animations ── */
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slideOut {
+  to { opacity: 0; transform: translateX(40px) scale(0.97); height: 0; padding: 0; margin: 0; border: 0; overflow: hidden; }
+}
+
+.task-slide-up {
+  animation: slideUp 0.3s ease;
+}
+
+.task-completing {
+  animation: slideOut 0.4s ease forwards;
+}
+
+/* タスクページ独自ヘッダー（サイドバーなし、全幅） */
+.task-page-header {
+  @apply fixed top-0 left-0 right-0 h-14 bg-white/95 border-b border-[#E8ECF1]
+         flex items-center justify-between px-6 z-50;
+  backdrop-filter: blur(12px);
+}
+
 /* Print styles */
 @media print {
   .sidebar, .topbar-main, .no-print { display: none !important; }

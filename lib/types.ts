@@ -338,3 +338,50 @@ export interface GeneralChat {
   content: string;
   created_at: string;
 }
+
+// ============================================================
+// Task Management Types
+// ============================================================
+
+export type ActionType = 'do' | 'contact' | 'decide' | 'errand'
+export type TaskPriority = 0 | 1 | 2 | 3
+export type TaskStatus = 'inbox' | 'this_week' | 'today' | 'in_progress' | 'done' | 'deleted'
+
+export interface TaskItem {
+  id: string
+  user_id: string
+  title: string
+  action_type: ActionType
+  priority: TaskPriority
+  estimated_minutes: number
+  due_date: string | null
+  status: TaskStatus
+  tags: string[]
+  contact_persons: string[]
+  project: string | null
+  parent_id: string | null
+  notes: string | null
+  created_at: string
+  updated_at: string
+}
+
+export interface TaskChat {
+  id: string
+  user_id: string
+  item_id: string
+  role: 'user' | 'assistant'
+  content: string
+  created_at: string
+}
+
+export interface TaskActionConfig {
+  icon: string
+  label: string
+  color: string
+  bg: string
+}
+
+export interface TaskTagStyle {
+  color: string
+  bg: string
+}

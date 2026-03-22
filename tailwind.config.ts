@@ -20,6 +20,11 @@ const config: Config = {
         torch: '#E65100',
         'torch-light': '#FF8A50',
         ink: '#1A1A1A',
+        stale: '#7C3AED',
+        'stale-bg': '#F5F3FF',
+      },
+      animation: {
+        'pulse-soft': 'pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite',
       },
       fontFamily: {
         brand: ['Cormorant Garamond', 'serif'],
